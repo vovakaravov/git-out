@@ -75,6 +75,13 @@ pub enum ActiveTab {
     Issues,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RemoteGitOp {
+    Fetch,
+    Pull,
+    Push,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Selection {
     Wip,
@@ -159,6 +166,8 @@ pub struct GitOutApp {
 
     // Busy & command log
     pub busy_git: bool,
+    pub active_remote_op: Option<RemoteGitOp>,
+    #[allow(dead_code)]
     pub busy_gh: bool,
     pub show_cmd_log: bool,
     pub cmd_log: Vec<CommandEntry>,
@@ -257,6 +266,7 @@ impl GitOutApp {
             selected_issue_number: None,
             selected_issue_detail: None,
             busy_git: false,
+            active_remote_op: None,
             busy_gh: false,
             show_cmd_log: false,
             cmd_log: Vec::new(),
@@ -379,6 +389,7 @@ impl GitOutApp {
         self.selected_issue_number = None;
         self.selected_issue_detail = None;
         self.busy_git = false;
+        self.active_remote_op = None;
         self.busy_gh = false;
     }
 
@@ -389,6 +400,7 @@ impl GitOutApp {
         self.stash_active_repo_cache();
         self.repo_generation = self.repo_generation.wrapping_add(1);
         self.busy_git = false;
+        self.active_remote_op = None;
         self.busy_gh = false;
         self.selected_worktree_file = None;
         self.selected_commit_file = None;
@@ -531,7 +543,6 @@ impl GitOutApp {
         };
         let repo_gen = self.repo_generation;
         self.busy_git = true;
-        cx.notify();
 
         cx.spawn(async move |this, cx| {
             let (snap_res, entries) = cx
@@ -753,6 +764,53 @@ impl GitOutApp {
         };
         let repo_gen = self.repo_generation;
         self.busy_git = true;
+
+        cx.spawn(async move |this, cx| {
+            let (res, entry) = cx.background_executor().spawn(async move { op(&root) }).await;
+            let _ = this.update(cx, |app, cx| {
+                app.push_cmd(entry);
+                if app.repo_generation != repo_gen {
+                    return;
+                }
+                app.busy_git = false;
+                match res {
+                    Ok(out) => {
+                        if let Some(msg) = success_msg {
+                            app.toast_ok(msg, cx);
+                        } else if !out.trim().is_empty() {
+                            let first_line = out.lines().next().unwrap_or("Done");
+                            app.toast_ok(first_line, cx);
+                        }
+                        app.refresh_snapshot_only(cx);
+                        if app.show_cmd_log {
+                            cx.notify();
+                        }
+                    }
+                    Err(err) => {
+                        app.toast_err(err.to_string(), cx);
+                        cx.notify();
+                    }
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn run_remote_git_action<F>(
+        &mut self,
+        op_kind: RemoteGitOp,
+        success_msg: Option<&'static str>,
+        cx: &mut Context<Self>,
+        op: F,
+    ) where
+        F: FnOnce(&PathBuf) -> (anyhow::Result<String>, CommandEntry) + Send + 'static,
+    {
+        let Some(root) = self.repo_root.clone() else {
+            return;
+        };
+        let repo_gen = self.repo_generation;
+        self.busy_git = true;
+        self.active_remote_op = Some(op_kind);
         cx.notify();
 
         cx.spawn(async move |this, cx| {
@@ -763,6 +821,7 @@ impl GitOutApp {
                     return;
                 }
                 app.busy_git = false;
+                app.active_remote_op = None;
                 match res {
                     Ok(out) => {
                         if let Some(msg) = success_msg {
@@ -784,16 +843,20 @@ impl GitOutApp {
     }
 
     pub fn fetch_all(&mut self, cx: &mut Context<Self>) {
-        self.run_git_action(Some("Fetched all remotes"), cx, |r| git::fetch_all(r));
+        self.run_remote_git_action(RemoteGitOp::Fetch, Some("Fetched all remotes"), cx, |r| {
+            git::fetch_all(r)
+        });
     }
 
     pub fn pull(&mut self, cx: &mut Context<Self>) {
-        self.run_git_action(Some("Pulled latest changes"), cx, |r| git::pull(r));
+        self.run_remote_git_action(RemoteGitOp::Pull, Some("Pulled latest changes"), cx, |r| {
+            git::pull(r)
+        });
     }
 
     pub fn push(&mut self, cx: &mut Context<Self>) {
         let branch = self.snapshot.as_ref().and_then(|s| s.head_branch.clone());
-        self.run_git_action(Some("Pushed to remote"), cx, move |r| {
+        self.run_remote_git_action(RemoteGitOp::Push, Some("Pushed to remote"), cx, move |r| {
             git::push(r, branch.as_deref())
         });
     }

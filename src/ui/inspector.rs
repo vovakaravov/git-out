@@ -263,7 +263,7 @@ fn render_wip_inspector(
                                 } else {
                                     "Commit Changes"
                                 })
-                                .disabled(!can_commit || app.busy_git)
+                                .disabled(!can_commit)
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.submit_commit(window, cx);
                                 })),

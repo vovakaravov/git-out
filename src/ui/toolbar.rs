@@ -1,4 +1,4 @@
-use super::{ActiveTab, GitOutApp, dialogs};
+use super::{ActiveTab, GitOutApp, RemoteGitOp, dialogs};
 use crate::gh::CiState;
 use crate::theme::{gh_colors, hex_color};
 use gpui_kit::assets::IconName;
@@ -128,13 +128,13 @@ pub fn render_toolbar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
     let header_bg = hex_color(gh_colors::CANVAS_INSET);
     let border = hex_color(gh_colors::BORDER);
     let fg = hex_color(gh_colors::FG);
-    let fg_muted = hex_color(gh_colors::FG_MUTED);
     let blue = hex_color(gh_colors::BLUE);
     let green = hex_color(gh_colors::GREEN_FG);
     let red = hex_color(gh_colors::RED_FG);
     let yellow = hex_color(gh_colors::YELLOW);
 
     let has_repo = app.snapshot.is_some();
+    let remote_busy = app.active_remote_op.is_some();
     let repo_name = app
         .snapshot
         .as_ref()
@@ -186,7 +186,7 @@ pub fn render_toolbar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
 
     h_flex()
         .w_full()
-        .h(px(48.))
+        .h(px(56.))
         .flex_shrink_0()
         .px_3()
         .gap_3()
@@ -194,18 +194,21 @@ pub fn render_toolbar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
         .border_b_1()
         .border_color(border)
         .items_center()
-        .justify_between()
-        // Left: Brand + Repo Switcher
+        // Left: Brand + Repo Switcher (flex_1 + overflow_hidden keeps center buttons anchored)
         .child(
             h_flex()
+                .flex_1()
+                .min_w_0()
+                .overflow_hidden()
                 .gap_2()
                 .items_center()
                 .child(
                     h_flex()
                         .gap_1p5()
                         .items_center()
+                        .flex_shrink_0()
                         .pr_1()
-                        .child(Icon::new(IconName::GitGraph).small().text_color(blue))
+                        .child(Icon::new(IconName::GitGraph).text_color(blue))
                         .child(
                             div()
                                 .text_sm()
@@ -217,7 +220,9 @@ pub fn render_toolbar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                 .child(
                     Button::new("repo-switcher")
                         .outline()
-                        .small()
+                        .h(px(36.))
+                        .px_3()
+                        .max_w(px(260.))
                         .icon(IconName::FolderOpen)
                         .label(format!("{repo_name} · {branch_name}"))
                         .tooltip("Open or switch repository (Ctrl+O)")
@@ -229,14 +234,17 @@ pub fn render_toolbar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
         // Center: Chunky GitKraken-style Git action bar
         .child(
             h_flex()
-                .gap_1p5()
+                .flex_shrink_0()
+                .gap_2()
                 .items_center()
                 .child(
                     Button::new("btn-fetch")
-                        .small()
+                        .h(px(36.))
+                        .px_3()
                         .icon(IconName::CloudDownload)
                         .label("Fetch")
-                        .disabled(!has_repo || app.busy_git)
+                        .loading(app.active_remote_op == Some(RemoteGitOp::Fetch))
+                        .disabled(!has_repo || remote_busy)
                         .tooltip("git fetch --all --prune --tags")
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.fetch_all(cx);
@@ -244,10 +252,12 @@ pub fn render_toolbar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                 )
                 .child(
                     Button::new("btn-pull")
-                        .small()
+                        .h(px(36.))
+                        .px_3()
                         .icon(IconName::ArrowDown)
                         .label(pull_label)
-                        .disabled(!has_repo || app.busy_git)
+                        .loading(app.active_remote_op == Some(RemoteGitOp::Pull))
+                        .disabled(!has_repo || remote_busy)
                         .tooltip("git pull")
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.pull(cx);
@@ -255,21 +265,22 @@ pub fn render_toolbar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                 )
                 .child(
                     Button::new("btn-push")
-                        .small()
+                        .h(px(36.))
+                        .px_3()
                         .icon(IconName::ArrowUp)
                         .label(push_label)
-                        .disabled(!has_repo || app.busy_git)
+                        .loading(app.active_remote_op == Some(RemoteGitOp::Push))
+                        .disabled(!has_repo || remote_busy)
                         .tooltip("git push (auto-sets upstream if missing)")
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.push(cx);
                         })),
                 )
-                .child(
-                    div().w(px(1.)).h(px(18.)).bg(border).mx_1(),
-                )
+                .child(div().w(px(1.)).h(px(22.)).bg(border).mx_1())
                 .child(
                     Button::new("btn-branch")
-                        .small()
+                        .h(px(36.))
+                        .px_3()
                         .icon(IconName::GitBranchPlus)
                         .label("Branch")
                         .disabled(!has_repo)
@@ -285,10 +296,11 @@ pub fn render_toolbar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                 )
                 .child(
                     Button::new("btn-stash")
-                        .small()
+                        .h(px(36.))
+                        .px_3()
                         .icon(IconName::Archive)
                         .label("Stash")
-                        .disabled(!has_repo || !has_dirty || app.busy_git)
+                        .disabled(!has_repo || !has_dirty)
                         .tooltip("Stash working tree changes")
                         .on_click(move |_, window, cx| {
                             dialogs::open_stash_dialog(app_for_stash.clone(), window, cx);
@@ -296,10 +308,11 @@ pub fn render_toolbar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                 )
                 .child(
                     Button::new("btn-pop")
-                        .small()
+                        .h(px(36.))
+                        .px_3()
                         .icon(IconName::ArchiveRestore)
                         .label("Pop")
-                        .disabled(!has_repo || !has_stashes || app.busy_git)
+                        .disabled(!has_repo || !has_stashes)
                         .tooltip("Pop latest stash")
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.stash_pop(None, cx);
@@ -307,9 +320,9 @@ pub fn render_toolbar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                 )
                 .child(
                     Button::new("btn-refresh")
-                        .small()
+                        .h(px(36.))
+                        .w(px(36.))
                         .icon(IconName::RefreshCw)
-                        .loading(app.busy_git)
                         .disabled(!has_repo)
                         .tooltip("Refresh git & gh (Ctrl+R)")
                         .on_click(cx.listener(|this, _, _, cx| {
@@ -320,13 +333,16 @@ pub fn render_toolbar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
         // Right: Mode Tabs + Open on GitHub + Cmd Log
         .child(
             h_flex()
-                .gap_1p5()
+                .flex_1()
+                .min_w_0()
+                .justify_end()
+                .gap_2()
                 .items_center()
                 .child(
                     h_flex()
-                        .p(px(2.))
+                        .p(px(3.))
                         .gap_1()
-                        .rounded(px(6.))
+                        .rounded(px(7.))
                         .bg(hex_color(gh_colors::CANVAS_SUBTLE))
                         .border_1()
                         .border_color(border)
@@ -384,7 +400,8 @@ pub fn render_toolbar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                 .when(has_github, |row| {
                     row.child(
                         Button::new("btn-gh-web")
-                            .small()
+                            .h(px(36.))
+                            .w(px(36.))
                             .icon(IconName::ExternalLink)
                             .tooltip("Open repository on GitHub (gh repo view --web)")
                             .on_click(cx.listener(|this, _, _, cx| {
@@ -394,7 +411,8 @@ pub fn render_toolbar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                 })
                 .child(
                     Button::new("btn-cmd-log")
-                        .small()
+                        .h(px(36.))
+                        .px_3()
                         .icon(IconName::Terminal)
                         .label(format!("{}", app.cmd_log.len()))
                         .tooltip("Toggle git/gh command log (Ctrl+`)")
@@ -402,15 +420,7 @@ pub fn render_toolbar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                             this.show_cmd_log = !this.show_cmd_log;
                             cx.notify();
                         })),
-                )
-                .when(app.busy_gh, |row| {
-                    row.child(
-                        div()
-                            .text_xs()
-                            .text_color(fg_muted)
-                            .child("gh…"),
-                    )
-                }),
+                ),
         )
 }
 
@@ -433,8 +443,10 @@ fn render_mode_tab(
 
     div()
         .id(id)
-        .px_2p5()
-        .py_1()
+        .h(px(30.))
+        .px_3()
+        .flex()
+        .items_center()
         .rounded(px(5.))
         .bg(bg)
         .cursor_pointer()
@@ -444,10 +456,10 @@ fn render_mode_tab(
             h_flex()
                 .gap_1p5()
                 .items_center()
-                .child(Icon::new(icon).small().text_color(if active { fg } else { fg_muted }))
+                .child(Icon::new(icon).text_color(if active { fg } else { fg_muted }))
                 .child(
                     div()
-                        .text_xs()
+                        .text_sm()
                         .font_weight(if active {
                             gpui_kit::FontWeight::SEMIBOLD
                         } else {
