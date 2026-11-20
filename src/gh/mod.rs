@@ -344,6 +344,31 @@ impl MergeStrategy {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReviewAction {
+    Approve,
+    RequestChanges,
+    Comment,
+}
+
+impl ReviewAction {
+    pub fn flag(self) -> &'static str {
+        match self {
+            Self::Approve => "--approve",
+            Self::RequestChanges => "--request-changes",
+            Self::Comment => "--comment",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Approve => "Approved",
+            Self::RequestChanges => "Requested changes",
+            Self::Comment => "Commented",
+        }
+    }
+}
+
 // --- gh CLI operations ---
 
 pub fn list_prs(cwd: &Path, state: &str) -> (Result<Vec<PullRequest>>, CommandEntry) {
@@ -413,6 +438,27 @@ pub fn merge_pr(cwd: &Path, number: u64, strategy: MergeStrategy) -> (Result<Str
 pub fn comment_pr(cwd: &Path, number: u64, body: &str) -> (Result<String>, CommandEntry) {
     let num = number.to_string();
     run_cmd("gh", &["pr", "comment", &num, "--body", body], cwd)
+}
+
+pub fn review_pr(
+    cwd: &Path,
+    number: u64,
+    action: ReviewAction,
+    body: &str,
+) -> (Result<String>, CommandEntry) {
+    let num = number.to_string();
+    let trimmed = body.trim();
+    let mut args = vec!["pr", "review", &num, action.flag()];
+    if !trimmed.is_empty() {
+        args.push("--body");
+        args.push(trimmed);
+    }
+    run_cmd("gh", &args, cwd)
+}
+
+pub fn ready_pr(cwd: &Path, number: u64) -> (Result<String>, CommandEntry) {
+    let num = number.to_string();
+    run_cmd("gh", &["pr", "ready", &num], cwd)
 }
 
 pub fn open_pr_web(cwd: &Path, number: u64) -> (Result<String>, CommandEntry) {
@@ -629,5 +675,15 @@ mod tests {
             slugify_issue_branch(issues[0].number, &issues[0].title),
             "issue-7-support-dark-mode-diff-split-toggle"
         );
+    }
+
+    #[test]
+    fn review_action_flags_and_labels_match_gh_cli() {
+        assert_eq!(ReviewAction::Approve.flag(), "--approve");
+        assert_eq!(ReviewAction::RequestChanges.flag(), "--request-changes");
+        assert_eq!(ReviewAction::Comment.flag(), "--comment");
+        assert_eq!(ReviewAction::Approve.label(), "Approved");
+        assert_eq!(ReviewAction::RequestChanges.label(), "Requested changes");
+        assert_eq!(ReviewAction::Comment.label(), "Commented");
     }
 }

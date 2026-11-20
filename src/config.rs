@@ -9,6 +9,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub recent_repos: Vec<PathBuf>,
     #[serde(default)]
+    pub open_repos: Vec<PathBuf>,
+    #[serde(default)]
     pub last_repo: Option<PathBuf>,
 }
 
@@ -45,6 +47,12 @@ impl AppConfig {
         self.recent_repos.insert(0, canonical.clone());
         self.recent_repos.truncate(MAX_RECENT_REPOS);
         self.last_repo = Some(canonical);
+        self.save();
+    }
+
+    pub fn save_open_repos(&mut self, open_repos: &[PathBuf], active: Option<&Path>) {
+        self.open_repos = open_repos.to_vec();
+        self.last_repo = active.map(Path::to_path_buf);
         self.save();
     }
 }

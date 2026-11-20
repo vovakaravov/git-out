@@ -1,6 +1,6 @@
 use super::GitOutApp;
 use crate::config;
-use crate::gh::MergeStrategy;
+use crate::gh::{MergeStrategy, ReviewAction};
 use crate::git::ResetMode;
 use crate::theme::{gh_colors, hex_color};
 use gpui_kit::assets::IconName;
@@ -8,6 +8,7 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::dialog::DialogFooter;
 use gpui_kit::component::input::{Input, InputState, Textarea, TextareaState};
+use gpui_kit::component::notification::Notification;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::{AppContext as _, Entity, Focusable as _, InteractiveElement as _, IntoElement, ParentElement, StatefulInteractiveElement as _, Styled, Window, div, prelude::FluentBuilder as _, px};
@@ -768,6 +769,125 @@ pub fn open_create_issue_dialog(
                                 window.close_dialog(cx);
                                 app_ok.update(cx, |app, cx| {
                                     app.create_issue(title, body, cx);
+                                });
+                            }),
+                    ),
+            )
+    });
+}
+
+pub fn open_review_pr_dialog(
+    app_entity: Entity<GitOutApp>,
+    pr_number: u64,
+    pr_title: String,
+    window: &mut Window,
+    cx: &mut gpui_kit::App,
+) {
+    let body_input = cx.new(|cx| {
+        TextareaState::new(window, cx)
+            .rows(6)
+            .placeholder("Leave review feedback (required for Request Changes / Comment, optional for Approve)…")
+    });
+    let initial_focus = Cell::new(true);
+
+    window.open_dialog(cx, move |dialog, window, cx| {
+        if initial_focus.replace(false) {
+            body_input.focus_handle(cx).focus(window, cx);
+        }
+
+        let b_approve = body_input.clone();
+        let b_comment = body_input.clone();
+        let b_changes = body_input.clone();
+        let app_approve = app_entity.clone();
+        let app_comment = app_entity.clone();
+        let app_changes = app_entity.clone();
+
+        dialog
+            .title(format!("Review PR #{pr_number} (gh pr review)"))
+            .w(px(540.))
+            .child(
+                v_flex()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                            .text_color(hex_color(gh_colors::FG))
+                            .child(pr_title.clone()),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(hex_color(gh_colors::FG_MUTED))
+                                    .child("Review summary (Markdown)"),
+                            )
+                            .child(Textarea::new(&body_input).h(px(140.)).w_full()),
+                    ),
+            )
+            .footer(
+                DialogFooter::new()
+                    .child(
+                        Button::new("rev-cancel")
+                            .label("Cancel")
+                            .on_click(|_, window, cx| window.close_dialog(cx)),
+                    )
+                    .child(
+                        Button::new("rev-comment")
+                            .icon(IconName::MessageSquare)
+                            .label("Comment")
+                            .on_click(move |_, window, cx| {
+                                let body = b_comment.read(cx).value().trim().to_string();
+                                if body.is_empty() {
+                                    window.push_notification(
+                                        Notification::error("Review comment cannot be empty."),
+                                        cx,
+                                    );
+                                    return;
+                                }
+                                window.close_dialog(cx);
+                                app_comment.update(cx, |app, cx| {
+                                    app.review_pr(pr_number, ReviewAction::Comment, body, cx);
+                                });
+                            }),
+                    )
+                    .child(
+                        Button::new("rev-changes")
+                            .danger()
+                            .icon(IconName::X)
+                            .label("Request Changes")
+                            .on_click(move |_, window, cx| {
+                                let body = b_changes.read(cx).value().trim().to_string();
+                                if body.is_empty() {
+                                    window.push_notification(
+                                        Notification::error("Explain what changes are requested."),
+                                        cx,
+                                    );
+                                    return;
+                                }
+                                window.close_dialog(cx);
+                                app_changes.update(cx, |app, cx| {
+                                    app.review_pr(
+                                        pr_number,
+                                        ReviewAction::RequestChanges,
+                                        body,
+                                        cx,
+                                    );
+                                });
+                            }),
+                    )
+                    .child(
+                        Button::new("rev-approve")
+                            .primary()
+                            .icon(IconName::Check)
+                            .label("Approve")
+                            .on_click(move |_, window, cx| {
+                                let body = b_approve.read(cx).value().trim().to_string();
+                                window.close_dialog(cx);
+                                app_approve.update(cx, |app, cx| {
+                                    app.review_pr(pr_number, ReviewAction::Approve, body, cx);
                                 });
                             }),
                     ),

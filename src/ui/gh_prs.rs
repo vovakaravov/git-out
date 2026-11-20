@@ -229,6 +229,30 @@ fn render_pr_list(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl IntoElem
                                             r.child(format!("by @{}", pr.author.login))
                                         }),
                                 )
+                                .when(pr.is_draft || !pr.review_decision.is_empty(), |col| {
+                                    col.child(
+                                        h_flex()
+                                            .flex_wrap()
+                                            .gap_1()
+                                            .when(pr.is_draft, |row| {
+                                                row.child(render_review_pill(
+                                                    "Draft",
+                                                    fg_muted,
+                                                ))
+                                            })
+                                            .when_some(
+                                                review_decision_style(
+                                                    &pr.review_decision,
+                                                    green,
+                                                    red,
+                                                    yellow,
+                                                ),
+                                                |row, (label, color)| {
+                                                    row.child(render_review_pill(label, color))
+                                                },
+                                            ),
+                                    )
+                                })
                                 .when(!pr.labels.is_empty(), |col| {
                                     col.child(
                                         h_flex()
@@ -304,6 +328,20 @@ fn render_pr_detail(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl IntoEl
                             h_flex()
                                 .gap_1p5()
                                 .items_center()
+                                .when(detail.is_draft, |row| {
+                                    row.child(render_review_pill("Draft", fg_muted))
+                                })
+                                .when_some(
+                                    review_decision_style(
+                                        &detail.review_decision,
+                                        green,
+                                        red,
+                                        yellow,
+                                    ),
+                                    |row, (label, color)| {
+                                        row.child(render_review_pill(label, color))
+                                    },
+                                )
                                 .when(pr_ci != CiState::None, |row| {
                                     let (ci_label, ci_col) = match pr_ci {
                                         CiState::Success => ("CI Passing", green),
@@ -371,9 +409,39 @@ fn render_pr_detail(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl IntoEl
                                 })),
                         )
                         .when(detail.state.eq_ignore_ascii_case("OPEN"), |row| {
+                            let app_rev = app_entity.clone();
                             let app_m = app_entity.clone();
+                            let t_rev = title.clone();
                             let t = title.clone();
                             row.child(
+                                Button::new("pr-review")
+                                    .small()
+                                    .icon(IconName::Check)
+                                    .label("Review…")
+                                    .tooltip("Approve, request changes, or comment via gh pr review")
+                                    .on_click(move |_, window, cx| {
+                                        dialogs::open_review_pr_dialog(
+                                            app_rev.clone(),
+                                            num,
+                                            t_rev.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    }),
+                            )
+                            .when(detail.is_draft, |r| {
+                                r.child(
+                                    Button::new("pr-ready")
+                                        .small()
+                                        .icon(IconName::Play)
+                                        .label("Ready for Review")
+                                        .tooltip("Mark draft PR ready for review (gh pr ready)")
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.ready_pr(num, cx);
+                                        })),
+                                )
+                            })
+                            .child(
                                 Button::new("pr-merge")
                                     .primary()
                                     .small()
@@ -546,10 +614,17 @@ fn render_pr_detail(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl IntoEl
                                                 .text_color(fg_muted)
                                                 .child("ACTIVITY & COMMENTS"),
                                         )
-                                        .children(detail.reviews.iter().filter(|r| !r.body.trim().is_empty()).enumerate().map(|(i, r)| {
+                                        .children(detail.reviews.iter().enumerate().map(|(i, r)| {
+                                            let st_upper = r.state.to_uppercase();
+                                            let (badge_label, badge_col) = match st_upper.as_str() {
+                                                "APPROVED" => ("APPROVED", green),
+                                                "CHANGES_REQUESTED" => ("CHANGES REQUESTED", red),
+                                                "DISMISSED" => ("DISMISSED", fg_muted),
+                                                _ => ("COMMENTED", hex_color(gh_colors::BLUE)),
+                                            };
                                             v_flex()
                                                 .p_3()
-                                                .gap_1()
+                                                .gap_1p5()
                                                 .rounded(px(6.))
                                                 .bg(subtle_bg)
                                                 .border_1()
@@ -557,12 +632,43 @@ fn render_pr_detail(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl IntoEl
                                                 .child(
                                                     h_flex()
                                                         .justify_between()
-                                                        .text_xs()
-                                                        .text_color(fg_muted)
-                                                        .child(format!("@{} · {}", r.author.login, r.state))
-                                                        .child(short_iso_date(&r.submitted_at)),
+                                                        .items_center()
+                                                        .child(
+                                                            h_flex()
+                                                                .gap_2()
+                                                                .items_center()
+                                                                .child(
+                                                                    div()
+                                                                        .text_xs()
+                                                                        .font_weight(
+                                                                            gpui_kit::FontWeight::SEMIBOLD,
+                                                                        )
+                                                                        .text_color(fg)
+                                                                        .child(format!(
+                                                                            "@{}",
+                                                                            r.author.login
+                                                                        )),
+                                                                )
+                                                                .child(render_review_pill(
+                                                                    badge_label,
+                                                                    badge_col,
+                                                                )),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_xs()
+                                                                .text_color(fg_muted)
+                                                                .child(short_iso_date(
+                                                                    &r.submitted_at,
+                                                                )),
+                                                        ),
                                                 )
-                                                .child(TextView::markdown(("pr-rev-md", i), r.body.clone()))
+                                                .when(!r.body.trim().is_empty(), |card| {
+                                                    card.child(TextView::markdown(
+                                                        ("pr-rev-md", i),
+                                                        r.body.clone(),
+                                                    ))
+                                                })
                                         }))
                                         .children(detail.comments.iter().enumerate().map(|(i, c)| {
                                             v_flex()
@@ -625,4 +731,32 @@ fn render_pr_detail(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl IntoEl
             )
         })
         .into_any_element()
+}
+
+fn review_decision_style(
+    decision: &str,
+    green: gpui_kit::Hsla,
+    red: gpui_kit::Hsla,
+    yellow: gpui_kit::Hsla,
+) -> Option<(&'static str, gpui_kit::Hsla)> {
+    match decision.to_uppercase().as_str() {
+        "APPROVED" => Some(("Approved", green)),
+        "CHANGES_REQUESTED" => Some(("Changes Requested", red)),
+        "REVIEW_REQUIRED" => Some(("Review Required", yellow)),
+        _ => None,
+    }
+}
+
+fn render_review_pill(label: &'static str, color: gpui_kit::Hsla) -> impl IntoElement {
+    div()
+        .px_1p5()
+        .py(px(1.))
+        .rounded_full()
+        .bg(color.opacity(0.16))
+        .border_1()
+        .border_color(color.opacity(0.45))
+        .text_xs()
+        .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+        .text_color(color)
+        .child(label)
 }

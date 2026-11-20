@@ -2,9 +2,127 @@ use super::{ActiveTab, GitOutApp, dialogs};
 use crate::gh::CiState;
 use crate::theme::{gh_colors, hex_color};
 use gpui_kit::assets::IconName;
-use gpui_kit::component::button::Button;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{Disableable as _, Icon, Sizable as _, h_flex};
 use gpui_kit::{Context, InteractiveElement as _, IntoElement, ParentElement, StatefulInteractiveElement as _, Styled, div, prelude::FluentBuilder as _, px};
+
+pub fn render_repo_tabs(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl IntoElement {
+    let tab_bar_bg = hex_color(gh_colors::CANVAS_INSET);
+    let active_bg = hex_color(gh_colors::CANVAS_DEFAULT);
+    let inactive_bg = hex_color(gh_colors::CANVAS_SUBTLE);
+    let border = hex_color(gh_colors::BORDER);
+    let fg = hex_color(gh_colors::FG);
+    let fg_muted = hex_color(gh_colors::FG_MUTED);
+    let blue = hex_color(gh_colors::BLUE);
+    let app_for_add = cx.entity();
+
+    h_flex()
+        .w_full()
+        .h(px(34.))
+        .flex_shrink_0()
+        .px_2()
+        .gap_1()
+        .bg(tab_bar_bg)
+        .border_b_1()
+        .border_color(border)
+        .items_center()
+        .child(
+            h_flex()
+                .id("repo-tabs-scroll")
+                .flex_1()
+                .min_w_0()
+                .gap_1()
+                .items_center()
+                .overflow_x_scrollbar()
+                .children(app.open_repos.iter().enumerate().map(|(idx, path)| {
+                    let is_active = app.repo_root.as_ref() == Some(path);
+                    let name = path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("repo")
+                        .to_string();
+                    let branch = if is_active {
+                        app.snapshot.as_ref().and_then(|s| s.head_branch.clone())
+                    } else {
+                        app.repo_cache
+                            .get(path)
+                            .and_then(|c| c.snapshot.as_ref())
+                            .and_then(|s| s.head_branch.clone())
+                    };
+
+                    h_flex()
+                        .id(("repo-tab", idx))
+                        .h(px(26.))
+                        .pl_2p5()
+                        .pr_1()
+                        .gap_1p5()
+                        .rounded(px(5.))
+                        .items_center()
+                        .flex_shrink_0()
+                        .cursor_pointer()
+                        .bg(if is_active { active_bg } else { inactive_bg })
+                        .border_1()
+                        .border_color(if is_active {
+                            blue.opacity(0.6)
+                        } else {
+                            hex_color(gh_colors::BORDER_MUTED)
+                        })
+                        .hover(|s| s.bg(hex_color(gh_colors::BTN_BG)))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.switch_to_repo_tab(idx, cx);
+                        }))
+                        .child(
+                            Icon::new(IconName::FolderOpen)
+                                .xsmall()
+                                .text_color(if is_active { blue } else { fg_muted }),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_weight(if is_active {
+                                    gpui_kit::FontWeight::SEMIBOLD
+                                } else {
+                                    gpui_kit::FontWeight::MEDIUM
+                                })
+                                .text_color(if is_active { fg } else { fg_muted })
+                                .child(name),
+                        )
+                        .when_some(branch, |row, br| {
+                            row.child(
+                                div()
+                                    .px_1()
+                                    .rounded(px(3.))
+                                    .bg(blue.opacity(0.14))
+                                    .text_xs()
+                                    .text_color(blue)
+                                    .child(br),
+                            )
+                        })
+                        .child(
+                            Button::new(("close-repo-tab", idx))
+                                .ghost()
+                                .xsmall()
+                                .icon(IconName::X)
+                                .tooltip("Close tab (Ctrl+W)")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.close_repo_tab(idx, cx);
+                                })),
+                        )
+                })),
+        )
+        .child(
+            Button::new("add-repo-tab")
+                .ghost()
+                .xsmall()
+                .icon(IconName::Plus)
+                .tooltip("Open repository in new tab (Ctrl+T)")
+                .on_click(move |_, window, cx| {
+                    dialogs::open_repo_dialog(app_for_add.clone(), window, cx);
+                }),
+        )
+}
 
 pub fn render_toolbar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl IntoElement {
     let header_bg = hex_color(gh_colors::CANVAS_INSET);

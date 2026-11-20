@@ -11,7 +11,10 @@ pub mod toolbar;
 
 use crate::cmd_log::CommandEntry;
 use crate::config::AppConfig;
-use crate::gh::{self, GhLabel, Issue, IssueDetail, MergeStrategy, PrDetail, PullRequest, RunDetail, WorkflowRun};
+use crate::gh::{
+    self, GhLabel, Issue, IssueDetail, MergeStrategy, PrDetail, PullRequest, ReviewAction,
+    RunDetail, WorkflowRun,
+};
 use crate::git::{self, CommitDetail, FileChange, RepoSnapshot, ResetMode};
 use crate::theme::{contrast_fg_for_hex, gh_colors, hex_color, parse_gh_label_hex};
 use crate::watcher::RepoWatcher;
@@ -27,6 +30,8 @@ use gpui_kit::{
     InteractiveElement as _, IntoElement, KeyBinding, ParentElement, Render, ScrollStrategy,
     Styled, UniformListScrollHandle, Window, actions, div, prelude::FluentBuilder as _, px,
 };
+use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -35,6 +40,9 @@ actions!(
     [
         RefreshAll,
         OpenRepoModal,
+        NewRepoTab,
+        CloseRepoTab,
+        NextRepoTab,
         SwitchTab1,
         SwitchTab2,
         SwitchTab3,
@@ -48,6 +56,9 @@ pub fn register_keybindings(cx: &mut App) {
         KeyBinding::new("ctrl-r", RefreshAll, None),
         KeyBinding::new("f5", RefreshAll, None),
         KeyBinding::new("ctrl-o", OpenRepoModal, None),
+        KeyBinding::new("ctrl-t", NewRepoTab, None),
+        KeyBinding::new("ctrl-w", CloseRepoTab, None),
+        KeyBinding::new("ctrl-tab", NextRepoTab, None),
         KeyBinding::new("ctrl-1", SwitchTab1, None),
         KeyBinding::new("ctrl-2", SwitchTab2, None),
         KeyBinding::new("ctrl-3", SwitchTab3, None),
@@ -73,10 +84,31 @@ pub enum Selection {
 const MAX_CMD_LOG: usize = 200;
 const LOG_COMMIT_LIMIT: usize = 500;
 
+#[derive(Clone)]
+pub struct CachedRepoState {
+    pub snapshot: Option<RepoSnapshot>,
+    pub active_tab: ActiveTab,
+    pub selection: Selection,
+    pub gh_error: Option<String>,
+    pub prs: Vec<PullRequest>,
+    pub selected_pr_number: Option<u64>,
+    pub selected_pr_detail: Option<PrDetail>,
+    pub runs: Vec<WorkflowRun>,
+    pub selected_run_id: Option<u64>,
+    pub selected_run_detail: Option<RunDetail>,
+    pub issues: Vec<Issue>,
+    pub selected_issue_number: Option<u64>,
+    pub selected_issue_detail: Option<IssueDetail>,
+}
+
 pub struct GitOutApp {
     pub window_handle: AnyWindowHandle,
     pub focus_handle: FocusHandle,
     pub config: AppConfig,
+
+    pub open_repos: Vec<PathBuf>,
+    pub repo_cache: HashMap<PathBuf, CachedRepoState>,
+    pub repo_generation: u64,
 
     pub repo_root: Option<PathBuf>,
     pub snapshot: Option<RepoSnapshot>,
@@ -168,10 +200,26 @@ impl GitOutApp {
         let inspector_diff_state = cx.new(|cx| DiffState::new([], cx).with_mode(DiffMode::Unified));
         let pr_diff_state = cx.new(|cx| DiffState::new([], cx).with_mode(DiffMode::Unified));
 
+        let restored_repos: Vec<PathBuf> = config
+            .open_repos
+            .iter()
+            .filter(|p| p.is_dir())
+            .filter_map(|p| git::resolve_repo_root(p).ok())
+            .fold(Vec::new(), |mut acc, p| {
+                let canon = fs::canonicalize(&p).unwrap_or(p);
+                if !acc.contains(&canon) {
+                    acc.push(canon);
+                }
+                acc
+            });
+
         let mut app = Self {
             window_handle: window.window_handle(),
             focus_handle: cx.focus_handle(),
             config,
+            open_repos: restored_repos,
+            repo_cache: HashMap::new(),
+            repo_generation: 0,
             repo_root: None,
             snapshot: None,
             watcher: None,
@@ -214,14 +262,15 @@ impl GitOutApp {
             cmd_log: Vec::new(),
         };
 
-        // Resolve initial repository (CLI arg -> cwd -> config.last_repo).
+        // Resolve initial repository (CLI arg -> cwd -> config.last_repo -> first restored tab).
         let candidate = initial_repo
             .or_else(|| {
                 std::env::current_dir()
                     .ok()
                     .and_then(|d| git::resolve_repo_root(&d).ok())
             })
-            .or_else(|| app.config.last_repo.clone());
+            .or_else(|| app.config.last_repo.clone())
+            .or_else(|| app.open_repos.first().cloned());
 
         if let Some(path) = candidate {
             app.open_repository(path, cx);
@@ -280,31 +329,191 @@ impl GitOutApp {
         });
     }
 
+    fn stash_active_repo_cache(&mut self) {
+        let Some(root) = self.repo_root.clone() else {
+            return;
+        };
+        self.repo_cache.insert(
+            root,
+            CachedRepoState {
+                snapshot: self.snapshot.clone(),
+                active_tab: self.active_tab,
+                selection: self.selection.clone(),
+                gh_error: self.gh_error.clone(),
+                prs: self.prs.clone(),
+                selected_pr_number: self.selected_pr_number,
+                selected_pr_detail: self.selected_pr_detail.clone(),
+                runs: self.runs.clone(),
+                selected_run_id: self.selected_run_id,
+                selected_run_detail: self.selected_run_detail.clone(),
+                issues: self.issues.clone(),
+                selected_issue_number: self.selected_issue_number,
+                selected_issue_detail: self.selected_issue_detail.clone(),
+            },
+        );
+    }
+
+    fn clear_active_repo_state(&mut self, cx: &mut Context<Self>) {
+        self.repo_generation = self.repo_generation.wrapping_add(1);
+        self.repo_root = None;
+        self.snapshot = None;
+        self.watcher = None;
+        self.active_tab = ActiveTab::Graph;
+        self.selection = Selection::Wip;
+        self.selected_worktree_file = None;
+        self.selected_commit_file = None;
+        self.commit_detail = None;
+        self.inspector_raw_patch.clear();
+        self.inspector_diff_state
+            .update(cx, |s, cx| s.set_files([], cx));
+        self.gh_error = None;
+        self.prs.clear();
+        self.runs.clear();
+        self.issues.clear();
+        self.selected_pr_number = None;
+        self.selected_pr_detail = None;
+        self.pr_diff_state
+            .update(cx, |s, cx| s.set_files([], cx));
+        self.selected_run_id = None;
+        self.selected_run_detail = None;
+        self.selected_issue_number = None;
+        self.selected_issue_detail = None;
+        self.busy_git = false;
+        self.busy_gh = false;
+    }
+
+    fn activate_repo(&mut self, root: PathBuf, cx: &mut Context<Self>) {
+        if self.repo_root.as_ref() == Some(&root) {
+            return;
+        }
+        self.stash_active_repo_cache();
+        self.repo_generation = self.repo_generation.wrapping_add(1);
+        self.busy_git = false;
+        self.busy_gh = false;
+        self.selected_worktree_file = None;
+        self.selected_commit_file = None;
+        self.commit_detail = None;
+        self.inspector_raw_patch.clear();
+        self.inspector_diff_state
+            .update(cx, |s, cx| s.set_files([], cx));
+
+        self.watcher = RepoWatcher::start(&root).ok();
+        self.repo_root = Some(root.clone());
+
+        if let Some(cached) = self.repo_cache.get(&root).cloned() {
+            self.snapshot = cached.snapshot;
+            self.active_tab = cached.active_tab;
+            self.selection = cached.selection;
+            self.gh_error = cached.gh_error;
+            self.prs = cached.prs;
+            self.selected_pr_number = cached.selected_pr_number;
+            self.selected_pr_detail = cached.selected_pr_detail;
+            self.runs = cached.runs;
+            self.selected_run_id = cached.selected_run_id;
+            self.selected_run_detail = cached.selected_run_detail;
+            self.issues = cached.issues;
+            self.selected_issue_number = cached.selected_issue_number;
+            self.selected_issue_detail = cached.selected_issue_detail;
+            let pr_files = self
+                .selected_pr_detail
+                .as_ref()
+                .map(|d| parse_diff_lenient(&d.diff_patch))
+                .unwrap_or_default();
+            self.pr_diff_state
+                .update(cx, |s, cx| s.set_files(pr_files, cx));
+        } else {
+            self.snapshot = None;
+            self.active_tab = ActiveTab::Graph;
+            self.selection = Selection::Wip;
+            self.gh_error = None;
+            self.prs.clear();
+            self.runs.clear();
+            self.issues.clear();
+            self.selected_pr_number = None;
+            self.selected_pr_detail = None;
+            self.pr_diff_state
+                .update(cx, |s, cx| s.set_files([], cx));
+            self.selected_run_id = None;
+            self.selected_run_detail = None;
+            self.selected_issue_number = None;
+            self.selected_issue_detail = None;
+        }
+
+        self.config
+            .save_open_repos(&self.open_repos, self.repo_root.as_deref());
+        self.refresh_all(cx);
+        cx.notify();
+    }
+
     pub fn open_repository(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         match git::resolve_repo_root(&path) {
             Ok(root) => {
-                self.config.record_repo(&root);
-                self.watcher = RepoWatcher::start(&root).ok();
-                self.repo_root = Some(root);
-                self.selection = Selection::Wip;
-                self.selected_worktree_file = None;
-                self.selected_commit_file = None;
-                self.commit_detail = None;
-                self.prs.clear();
-                self.runs.clear();
-                self.issues.clear();
-                self.selected_pr_number = None;
-                self.selected_pr_detail = None;
-                self.selected_run_id = None;
-                self.selected_run_detail = None;
-                self.selected_issue_number = None;
-                self.selected_issue_detail = None;
-                self.gh_error = None;
-                self.refresh_all(cx);
+                let canonical = fs::canonicalize(&root).unwrap_or(root);
+                if !self.open_repos.contains(&canonical) {
+                    self.open_repos.push(canonical.clone());
+                }
+                self.config.record_repo(&canonical);
+                if self.repo_root.as_ref() == Some(&canonical) {
+                    self.config
+                        .save_open_repos(&self.open_repos, self.repo_root.as_deref());
+                    self.refresh_all(cx);
+                } else {
+                    self.activate_repo(canonical, cx);
+                }
             }
             Err(err) => {
                 self.toast_err(format!("Not a git repository: {err}"), cx);
             }
+        }
+    }
+
+    pub fn switch_to_repo_tab(&mut self, idx: usize, cx: &mut Context<Self>) {
+        if let Some(target) = self.open_repos.get(idx).cloned() {
+            self.activate_repo(target, cx);
+        }
+    }
+
+    pub fn next_repo_tab(&mut self, cx: &mut Context<Self>) {
+        if self.open_repos.len() <= 1 {
+            return;
+        }
+        let cur = self
+            .repo_root
+            .as_ref()
+            .and_then(|r| self.open_repos.iter().position(|p| p == r))
+            .unwrap_or(0);
+        let next = (cur + 1) % self.open_repos.len();
+        self.switch_to_repo_tab(next, cx);
+    }
+
+    pub fn close_repo_tab(&mut self, idx: usize, cx: &mut Context<Self>) {
+        if idx >= self.open_repos.len() {
+            return;
+        }
+        let removed = self.open_repos.remove(idx);
+        self.repo_cache.remove(&removed);
+
+        if self.repo_root.as_ref() == Some(&removed) {
+            self.clear_active_repo_state(cx);
+            if !self.open_repos.is_empty() {
+                let next_idx = idx.min(self.open_repos.len() - 1);
+                let next_repo = self.open_repos[next_idx].clone();
+                self.activate_repo(next_repo, cx);
+                return;
+            }
+        }
+        self.config
+            .save_open_repos(&self.open_repos, self.repo_root.as_deref());
+        cx.notify();
+    }
+
+    pub fn close_current_repo_tab(&mut self, cx: &mut Context<Self>) {
+        if let Some(cur_idx) = self
+            .repo_root
+            .as_ref()
+            .and_then(|r| self.open_repos.iter().position(|p| p == r))
+        {
+            self.close_repo_tab(cur_idx, cx);
         }
     }
 
@@ -320,6 +529,7 @@ impl GitOutApp {
         let Some(root) = self.repo_root.clone() else {
             return;
         };
+        let repo_gen = self.repo_generation;
         self.busy_git = true;
         cx.notify();
 
@@ -330,8 +540,11 @@ impl GitOutApp {
                 .await;
 
             let _ = this.update(cx, |app, cx| {
-                app.busy_git = false;
                 app.push_cmds(entries);
+                if app.repo_generation != repo_gen {
+                    return;
+                }
+                app.busy_git = false;
                 match snap_res {
                     Ok(snap) => {
                         let dirty = snap.is_dirty();
@@ -433,6 +646,7 @@ impl GitOutApp {
         };
 
         if let Some(file_path) = path {
+            let repo_gen = self.repo_generation;
             cx.spawn(async move |this, cx| {
                 let (res, entry) = cx
                     .background_executor()
@@ -440,6 +654,9 @@ impl GitOutApp {
                     .await;
                 let _ = this.update(cx, |app, cx| {
                     app.push_cmd(entry);
+                    if app.repo_generation != repo_gen {
+                        return;
+                    }
                     if let Ok(patch) = res {
                         app.apply_inspector_patch(patch, cx);
                     }
@@ -457,6 +674,7 @@ impl GitOutApp {
         let Some(root) = self.repo_root.clone() else {
             return;
         };
+        let repo_gen = self.repo_generation;
         cx.spawn(async move |this, cx| {
             let (res, entries) = cx
                 .background_executor()
@@ -464,6 +682,9 @@ impl GitOutApp {
                 .await;
             let _ = this.update(cx, |app, cx| {
                 app.push_cmds(entries);
+                if app.repo_generation != repo_gen {
+                    return;
+                }
                 match res {
                     Ok(detail) => {
                         let patch = detail.patch.clone();
@@ -484,6 +705,7 @@ impl GitOutApp {
         let Some(root) = self.repo_root.clone() else {
             return;
         };
+        let repo_gen = self.repo_generation;
         let selected = self.selected_worktree_file.clone();
         cx.spawn(async move |this, cx| {
             let (res, entries) = cx
@@ -492,6 +714,9 @@ impl GitOutApp {
                 .await;
             let _ = this.update(cx, |app, cx| {
                 app.push_cmds(entries);
+                if app.repo_generation != repo_gen {
+                    return;
+                }
                 if let Ok(patch) = res {
                     app.apply_inspector_patch(patch, cx);
                 }
@@ -526,14 +751,18 @@ impl GitOutApp {
         let Some(root) = self.repo_root.clone() else {
             return;
         };
+        let repo_gen = self.repo_generation;
         self.busy_git = true;
         cx.notify();
 
         cx.spawn(async move |this, cx| {
             let (res, entry) = cx.background_executor().spawn(async move { op(&root) }).await;
             let _ = this.update(cx, |app, cx| {
-                app.busy_git = false;
                 app.push_cmd(entry);
+                if app.repo_generation != repo_gen {
+                    return;
+                }
+                app.busy_git = false;
                 match res {
                     Ok(out) => {
                         if let Some(msg) = success_msg {
@@ -694,6 +923,7 @@ impl GitOutApp {
         let Some(root) = self.repo_root.clone() else {
             return;
         };
+        let repo_gen = self.repo_generation;
         let state = self.pr_state_filter.clone();
         self.busy_gh = true;
         cx.notify();
@@ -704,8 +934,11 @@ impl GitOutApp {
                 .spawn(async move { gh::list_prs(&root, &state) })
                 .await;
             let _ = this.update(cx, |app, cx| {
-                app.busy_gh = false;
                 app.push_cmd(entry);
+                if app.repo_generation != repo_gen {
+                    return;
+                }
+                app.busy_gh = false;
                 match res {
                     Ok(prs) => {
                         app.gh_error = None;
@@ -732,6 +965,7 @@ impl GitOutApp {
         let Some(root) = self.repo_root.clone() else {
             return;
         };
+        let repo_gen = self.repo_generation;
         self.busy_gh = true;
         cx.notify();
 
@@ -741,8 +975,11 @@ impl GitOutApp {
                 .spawn(async move { gh::view_pr_detail(&root, number) })
                 .await;
             let _ = this.update(cx, |app, cx| {
-                app.busy_gh = false;
                 app.push_cmds(entries);
+                if app.repo_generation != repo_gen {
+                    return;
+                }
+                app.busy_gh = false;
                 match res {
                     Ok(detail) => {
                         let files = parse_diff_lenient(&detail.diff_patch);
@@ -865,6 +1102,7 @@ impl GitOutApp {
         let Some(root) = self.repo_root.clone() else {
             return;
         };
+        let repo_gen = self.repo_generation;
         cx.spawn(async move |this, cx| {
             let (res, entry) = cx
                 .background_executor()
@@ -872,6 +1110,9 @@ impl GitOutApp {
                 .await;
             let _ = this.update(cx, |app, cx| {
                 app.push_cmd(entry);
+                if app.repo_generation != repo_gen {
+                    return;
+                }
                 match res {
                     Ok(_) => {
                         app.toast_ok("Posted comment", cx);
@@ -879,6 +1120,76 @@ impl GitOutApp {
                     }
                     Err(err) => app.toast_err(err.to_string(), cx),
                 }
+            });
+        })
+        .detach();
+    }
+
+    pub fn review_pr(
+        &mut self,
+        number: u64,
+        action: ReviewAction,
+        body: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(root) = self.repo_root.clone() else {
+            return;
+        };
+        let repo_gen = self.repo_generation;
+        self.busy_gh = true;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let (res, entry) = cx
+                .background_executor()
+                .spawn(async move { gh::review_pr(&root, number, action, &body) })
+                .await;
+            let _ = this.update(cx, |app, cx| {
+                app.push_cmd(entry);
+                if app.repo_generation != repo_gen {
+                    return;
+                }
+                app.busy_gh = false;
+                match res {
+                    Ok(_) => {
+                        app.toast_ok(format!("{} PR #{number}", action.label()), cx);
+                        app.refresh_gh_prs(cx);
+                        app.select_pr(number, cx);
+                    }
+                    Err(err) => app.toast_err(err.to_string(), cx),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub fn ready_pr(&mut self, number: u64, cx: &mut Context<Self>) {
+        let Some(root) = self.repo_root.clone() else {
+            return;
+        };
+        let repo_gen = self.repo_generation;
+        self.busy_gh = true;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let (res, entry) = cx
+                .background_executor()
+                .spawn(async move { gh::ready_pr(&root, number) })
+                .await;
+            let _ = this.update(cx, |app, cx| {
+                app.push_cmd(entry);
+                if app.repo_generation != repo_gen {
+                    return;
+                }
+                app.busy_gh = false;
+                match res {
+                    Ok(_) => {
+                        app.toast_ok(format!("Marked PR #{number} ready for review"), cx);
+                        app.refresh_gh_prs(cx);
+                        app.select_pr(number, cx);
+                    }
+                    Err(err) => app.toast_err(err.to_string(), cx),
+                }
+                cx.notify();
             });
         })
         .detach();
@@ -907,6 +1218,7 @@ impl GitOutApp {
         let Some(root) = self.repo_root.clone() else {
             return;
         };
+        let repo_gen = self.repo_generation;
         cx.spawn(async move |this, cx| {
             let (res, entry) = cx
                 .background_executor()
@@ -914,6 +1226,9 @@ impl GitOutApp {
                 .await;
             let _ = this.update(cx, |app, cx| {
                 app.push_cmd(entry);
+                if app.repo_generation != repo_gen {
+                    return;
+                }
                 if let Ok(runs) = res {
                     let first_id = runs.first().map(|r| r.database_id);
                     app.runs = runs;
@@ -934,6 +1249,7 @@ impl GitOutApp {
         let Some(root) = self.repo_root.clone() else {
             return;
         };
+        let repo_gen = self.repo_generation;
         cx.spawn(async move |this, cx| {
             let (res, entries) = cx
                 .background_executor()
@@ -941,6 +1257,9 @@ impl GitOutApp {
                 .await;
             let _ = this.update(cx, |app, cx| {
                 app.push_cmds(entries);
+                if app.repo_generation != repo_gen {
+                    return;
+                }
                 match res {
                     Ok(detail) => app.selected_run_detail = Some(detail),
                     Err(err) => app.toast_err(err.to_string(), cx),
@@ -997,6 +1316,7 @@ impl GitOutApp {
         let Some(root) = self.repo_root.clone() else {
             return;
         };
+        let repo_gen = self.repo_generation;
         let state = self.issue_state_filter.clone();
         cx.spawn(async move |this, cx| {
             let (res, entry) = cx
@@ -1005,6 +1325,9 @@ impl GitOutApp {
                 .await;
             let _ = this.update(cx, |app, cx| {
                 app.push_cmd(entry);
+                if app.repo_generation != repo_gen {
+                    return;
+                }
                 if let Ok(issues) = res {
                     let first_num = issues.first().map(|i| i.number);
                     app.issues = issues;
@@ -1025,6 +1348,7 @@ impl GitOutApp {
         let Some(root) = self.repo_root.clone() else {
             return;
         };
+        let repo_gen = self.repo_generation;
         cx.spawn(async move |this, cx| {
             let (res, entry) = cx
                 .background_executor()
@@ -1032,6 +1356,9 @@ impl GitOutApp {
                 .await;
             let _ = this.update(cx, |app, cx| {
                 app.push_cmd(entry);
+                if app.repo_generation != repo_gen {
+                    return;
+                }
                 match res {
                     Ok(detail) => app.selected_issue_detail = Some(detail),
                     Err(err) => app.toast_err(err.to_string(), cx),
@@ -1133,7 +1460,8 @@ impl Render for GitOutApp {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let bg = hex_color(gh_colors::CANVAS_DEFAULT);
         let fg = hex_color(gh_colors::FG);
-        let app_entity = cx.entity();
+        let app_for_open = cx.entity();
+        let app_for_new_tab = cx.entity();
 
         v_flex()
             .id("git-out-root")
@@ -1145,8 +1473,17 @@ impl Render for GitOutApp {
                 this.refresh_all(cx);
             }))
             .on_action(move |_: &OpenRepoModal, window, cx| {
-                dialogs::open_repo_dialog(app_entity.clone(), window, cx);
+                dialogs::open_repo_dialog(app_for_open.clone(), window, cx);
             })
+            .on_action(move |_: &NewRepoTab, window, cx| {
+                dialogs::open_repo_dialog(app_for_new_tab.clone(), window, cx);
+            })
+            .on_action(cx.listener(|this, _: &CloseRepoTab, _, cx| {
+                this.close_current_repo_tab(cx);
+            }))
+            .on_action(cx.listener(|this, _: &NextRepoTab, _, cx| {
+                this.next_repo_tab(cx);
+            }))
             .on_action(cx.listener(|this, _: &SwitchTab1, _, cx| {
                 this.switch_tab(ActiveTab::Graph, cx);
             }))
@@ -1163,6 +1500,9 @@ impl Render for GitOutApp {
                 this.show_cmd_log = !this.show_cmd_log;
                 cx.notify();
             }))
+            .when(!self.open_repos.is_empty(), |col| {
+                col.child(toolbar::render_repo_tabs(self, cx))
+            })
             .child(toolbar::render_toolbar(self, cx))
             .child(
                 div()
