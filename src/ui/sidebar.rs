@@ -3,9 +3,10 @@ use crate::gh::CiState;
 use crate::theme::{gh_colors, hex_color};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenuItem};
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
-use gpui_kit::{Context, InteractiveElement as _, IntoElement, ParentElement, StatefulInteractiveElement as _, Styled, div, prelude::FluentBuilder as _, px};
+use gpui_kit::{ClipboardItem, Context, InteractiveElement as _, IntoElement, ParentElement, StatefulInteractiveElement as _, Styled, div, prelude::FluentBuilder as _, px};
 use std::rc::Rc;
 
 pub fn render_sidebar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl IntoElement {
@@ -70,10 +71,12 @@ pub fn render_sidebar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                                 let name_co = b.name.clone();
                                 let name_merge = b.name.clone();
                                 let name_del = b.name.clone();
+                                let name_menu = b.name.clone();
                                 let is_head = b.is_head;
                                 let ahead = b.ahead;
                                 let behind = b.behind;
                                 let app_for_del = app_entity.clone();
+                                let app_menu = app_entity.clone();
                                 let can_merge = head_branch.as_deref() != Some(b.name.as_str());
 
                                 h_flex()
@@ -91,6 +94,98 @@ pub fn render_sidebar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                                         gpui_kit::transparent_black()
                                     })
                                     .hover(|s| s.bg(hex_color(gh_colors::BTN_BG)))
+                                    .context_menu(move |menu, _, _| {
+                                        let app_co = app_menu.clone();
+                                        let app_mg = app_menu.clone();
+                                        let app_br = app_menu.clone();
+                                        let app_del_m = app_menu.clone();
+                                        let n_co = name_menu.clone();
+                                        let n_mg = name_menu.clone();
+                                        let n_br = name_menu.clone();
+                                        let n_del = name_menu.clone();
+                                        let n_copy = name_menu.clone();
+
+                                        menu.label(format!("Branch {name_menu}"))
+                                            .item(
+                                                PopupMenuItem::new(format!(
+                                                    "Checkout '{name_menu}'"
+                                                ))
+                                                .icon(IconName::Check)
+                                                .disabled(is_head)
+                                                .on_click(move |_, _, cx| {
+                                                    let n = n_co.clone();
+                                                    app_co.update(cx, |app, cx| {
+                                                        app.checkout_target(n, cx);
+                                                    });
+                                                }),
+                                            )
+                                            .item(
+                                                PopupMenuItem::new(format!(
+                                                    "Merge '{name_menu}' into current"
+                                                ))
+                                                .icon(IconName::GitMerge)
+                                                .disabled(!can_merge)
+                                                .on_click(move |_, _, cx| {
+                                                    let n = n_mg.clone();
+                                                    app_mg.update(cx, |app, cx| {
+                                                        app.merge_branch(n, cx);
+                                                    });
+                                                }),
+                                            )
+                                            .item(
+                                                PopupMenuItem::new("Create branch from here…")
+                                                    .icon(IconName::GitBranchPlus)
+                                                    .on_click(move |_, window, cx| {
+                                                        dialogs::open_create_branch_dialog(
+                                                            app_br.clone(),
+                                                            Some(n_br.clone()),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    }),
+                                            )
+                                            .separator()
+                                            .item(
+                                                PopupMenuItem::new(format!(
+                                                    "Delete '{name_menu}'…"
+                                                ))
+                                                .icon(IconName::Trash)
+                                                .disabled(is_head)
+                                                .on_click(move |_, window, cx| {
+                                                    let app_d = app_del_m.clone();
+                                                    let target = n_del.clone();
+                                                    dialogs::open_confirm_danger(
+                                                        format!("Delete branch `{target}`?"),
+                                                        "Runs `git branch -d`. Unmerged branches will not be deleted unless forced from terminal.".to_string(),
+                                                        "Delete".to_string(),
+                                                        window,
+                                                        cx,
+                                                        Rc::new(move |_, cx| {
+                                                            let bname = target.clone();
+                                                            app_d.update(cx, |app, cx| {
+                                                                app.delete_branch(bname, false, cx);
+                                                            });
+                                                        }),
+                                                    );
+                                                }),
+                                            )
+                                            .item(
+                                                PopupMenuItem::new("Copy branch name")
+                                                    .icon(IconName::Copy)
+                                                    .on_click(move |_, window, cx| {
+                                                        cx.write_to_clipboard(
+                                                            ClipboardItem::new_string(
+                                                                n_copy.clone(),
+                                                            ),
+                                                        );
+                                                        super::notify_info(
+                                                            window,
+                                                            cx,
+                                                            "Copied branch name",
+                                                        );
+                                                    }),
+                                            )
+                                    })
                                     .child(
                                         h_flex()
                                             .id(("local-br-jump", i))
@@ -99,9 +194,12 @@ pub fn render_sidebar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                                             .gap_1p5()
                                             .items_center()
                                             .cursor_pointer()
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.jump_to_commit(&hash_jump, cx);
-                                                let _ = &name_jump;
+                                            .on_click(cx.listener(move |this, event: &gpui_kit::ClickEvent, _, cx| {
+                                                if event.click_count() >= 2 && !is_head {
+                                                    this.checkout_target(name_jump.clone(), cx);
+                                                } else {
+                                                    this.jump_to_commit(&hash_jump, cx);
+                                                }
                                             }))
                                             .child(
                                                 Icon::new(IconName::GitBranch)
@@ -214,6 +312,14 @@ pub fn render_sidebar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                             .children(snap.remote_branches.iter().enumerate().map(|(i, b)| {
                                 let hash_jump = b.target_hash.clone();
                                 let co_target = b.name.clone();
+                                let co_dbl = b.name.clone();
+                                let rem_menu = b.name.clone();
+                                let app_rem_menu = app_entity.clone();
+                                let short_rem = rem_menu
+                                    .split_once('/')
+                                    .map(|(_, rest)| rest.to_string())
+                                    .unwrap_or_else(|| rem_menu.clone());
+
                                 h_flex()
                                     .id(("rem-br", i))
                                     .w_full()
@@ -223,6 +329,40 @@ pub fn render_sidebar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                                     .justify_between()
                                     .items_center()
                                     .hover(|s| s.bg(hex_color(gh_colors::BTN_BG)))
+                                    .context_menu(move |menu, _, _| {
+                                        let app_co = app_rem_menu.clone();
+                                        let s_co = short_rem.clone();
+                                        let r_copy = rem_menu.clone();
+                                        menu.label(format!("Remote {rem_menu}"))
+                                            .item(
+                                                PopupMenuItem::new(format!(
+                                                    "Checkout '{short_rem}'"
+                                                ))
+                                                .icon(IconName::Check)
+                                                .on_click(move |_, _, cx| {
+                                                    let s = s_co.clone();
+                                                    app_co.update(cx, |app, cx| {
+                                                        app.checkout_target(s, cx);
+                                                    });
+                                                }),
+                                            )
+                                            .item(
+                                                PopupMenuItem::new("Copy remote branch name")
+                                                    .icon(IconName::Copy)
+                                                    .on_click(move |_, window, cx| {
+                                                        cx.write_to_clipboard(
+                                                            ClipboardItem::new_string(
+                                                                r_copy.clone(),
+                                                            ),
+                                                        );
+                                                        super::notify_info(
+                                                            window,
+                                                            cx,
+                                                            "Copied branch name",
+                                                        );
+                                                    }),
+                                            )
+                                    })
                                     .child(
                                         h_flex()
                                             .id(("rem-br-jump", i))
@@ -231,8 +371,16 @@ pub fn render_sidebar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                                             .gap_1p5()
                                             .items_center()
                                             .cursor_pointer()
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.jump_to_commit(&hash_jump, cx);
+                                            .on_click(cx.listener(move |this, event: &gpui_kit::ClickEvent, _, cx| {
+                                                if event.click_count() >= 2 {
+                                                    let short = co_dbl
+                                                        .split_once('/')
+                                                        .map(|(_, rest)| rest.to_string())
+                                                        .unwrap_or_else(|| co_dbl.clone());
+                                                    this.checkout_target(short, cx);
+                                                } else {
+                                                    this.jump_to_commit(&hash_jump, cx);
+                                                }
                                             }))
                                             .child(
                                                 Icon::new(IconName::GitBranch)

@@ -1,12 +1,16 @@
-use super::{ActiveTab, GitOutApp, Selection, graph_canvas};
+use super::{ActiveTab, GitOutApp, Selection, dialogs, graph_canvas};
 use crate::gh::{CiState, PullRequest};
 use crate::git::{RefKind, format_relative_time};
 use crate::theme::{gh_colors, hex_color};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::input::Input;
+use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenuItem};
 use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
-use gpui_kit::{Context, InteractiveElement as _, IntoElement, ParentElement, ScrollStrategy, StatefulInteractiveElement as _, Styled, div, prelude::FluentBuilder as _, px, uniform_list};
+use gpui_kit::{
+    ClipboardItem, Context, InteractiveElement as _, IntoElement, ParentElement, ScrollStrategy,
+    StatefulInteractiveElement as _, Styled, div, prelude::FluentBuilder as _, px, uniform_list,
+};
 use std::collections::HashMap;
 
 pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl IntoElement {
@@ -98,6 +102,7 @@ pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl I
     let dirty = snap.is_dirty();
     let staged_n = snap.staged_files.len();
     let unstaged_n = snap.unstaged_files.len();
+    let has_stashes = !snap.stashes.is_empty();
 
     let selected_hash = match &app.selection {
         Selection::Commit(h) => Some(h.clone()),
@@ -228,7 +233,50 @@ pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl I
                         .text_xs()
                         .text_color(fg_subtle)
                         .child("Click to stage & commit"),
-                ),
+                )
+                .context_menu({
+                    let app_wip = app_entity.clone();
+                    move |menu, _, _| {
+                        let app_stage = app_wip.clone();
+                        let app_unstage = app_wip.clone();
+                        let app_stash = app_wip.clone();
+                        let app_pop = app_wip.clone();
+                        menu.label("Working Tree")
+                            .item(
+                                PopupMenuItem::new("Stage all changes")
+                                    .icon(IconName::Plus)
+                                    .disabled(unstaged_n == 0)
+                                    .on_click(move |_, _, cx| {
+                                        app_stage.update(cx, |app, cx| app.stage_all(cx));
+                                    }),
+                            )
+                            .item(
+                                PopupMenuItem::new("Unstage all changes")
+                                    .icon(IconName::X)
+                                    .disabled(staged_n == 0)
+                                    .on_click(move |_, _, cx| {
+                                        app_unstage.update(cx, |app, cx| app.unstage_all(cx));
+                                    }),
+                            )
+                            .separator()
+                            .item(
+                                PopupMenuItem::new("Stash changes…")
+                                    .icon(IconName::Archive)
+                                    .disabled(!dirty)
+                                    .on_click(move |_, window, cx| {
+                                        dialogs::open_stash_dialog(app_stash.clone(), window, cx);
+                                    }),
+                            )
+                            .item(
+                                PopupMenuItem::new("Pop latest stash")
+                                    .icon(IconName::ArchiveRestore)
+                                    .disabled(!has_stashes)
+                                    .on_click(move |_, _, cx| {
+                                        app_pop.update(cx, |app, cx| app.stash_pop(None, cx));
+                                    }),
+                            )
+                    }
+                }),
         )
         // Virtualized Commit Graph Rows
         .child(
@@ -264,7 +312,21 @@ pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl I
                                         .as_deref()
                                         .is_some_and(|h| h == commit.hash);
                                     let hash_click = commit.hash.clone();
+                                    let short_hash = commit.short_hash.clone();
+                                    let subject_copy = commit.subject.clone();
+                                    let local_branches_here: Vec<String> = commit
+                                        .refs
+                                        .iter()
+                                        .filter(|r| r.kind == RefKind::LocalBranch)
+                                        .map(|r| r.name.clone())
+                                        .collect();
+                                    let dbl_checkout_target = local_branches_here
+                                        .first()
+                                        .cloned()
+                                        .unwrap_or_else(|| commit.hash.clone());
                                     let app_click = app_ref.clone();
+                                    let app_menu = app_ref.clone();
+                                    let hash_menu = commit.hash.clone();
 
                                     // Find matching PR from local branch names on this commit
                                     let matched_pr = commit.refs.iter().find_map(|r| {
@@ -292,11 +354,140 @@ pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl I
                                         .border_b_1()
                                         .border_color(hex_color(gh_colors::BORDER_MUTED))
                                         .hover(|s| s.bg(hex_color(gh_colors::CANVAS_SUBTLE)))
-                                        .on_click(move |_, _, cx| {
+                                        .on_click(move |event, _, cx| {
                                             let h = hash_click.clone();
+                                            let dbl_target = dbl_checkout_target.clone();
+                                            let is_dbl = event.click_count() >= 2;
                                             app_click.update(cx, |app, cx| {
                                                 app.select_commit(h, cx);
+                                                if is_dbl {
+                                                    app.checkout_target(dbl_target, cx);
+                                                }
                                             });
+                                        })
+                                        .context_menu(move |mut menu, _, _| {
+                                            menu = menu.label(format!("Commit {short_hash}"));
+                                            for br in &local_branches_here {
+                                                let br_name = br.clone();
+                                                let app_br = app_menu.clone();
+                                                menu = menu.item(
+                                                    PopupMenuItem::new(format!(
+                                                        "Checkout branch '{br_name}'"
+                                                    ))
+                                                    .icon(IconName::GitBranch)
+                                                    .on_click(move |_, _, cx| {
+                                                        let b = br_name.clone();
+                                                        app_br.update(cx, |app, cx| {
+                                                            app.checkout_target(b, cx);
+                                                        });
+                                                    }),
+                                                );
+                                            }
+                                            let h_co = hash_menu.clone();
+                                            let app_co = app_menu.clone();
+                                            let h_br = hash_menu.clone();
+                                            let app_new_br = app_menu.clone();
+                                            let h_cp = hash_menu.clone();
+                                            let app_cp = app_menu.clone();
+                                            let h_rev = hash_menu.clone();
+                                            let app_rev = app_menu.clone();
+                                            let h_rst = hash_menu.clone();
+                                            let sh_rst = short_hash.clone();
+                                            let app_rst = app_menu.clone();
+                                            let h_copy = hash_menu.clone();
+                                            let msg_copy = subject_copy.clone();
+
+                                            menu.item(
+                                                PopupMenuItem::new(format!(
+                                                    "Checkout commit ({short_hash})"
+                                                ))
+                                                .icon(IconName::Check)
+                                                .on_click(move |_, _, cx| {
+                                                    let h = h_co.clone();
+                                                    app_co.update(cx, |app, cx| {
+                                                        app.checkout_target(h, cx);
+                                                    });
+                                                }),
+                                            )
+                                            .item(
+                                                PopupMenuItem::new("Create branch here…")
+                                                    .icon(IconName::GitBranchPlus)
+                                                    .on_click(move |_, window, cx| {
+                                                        dialogs::open_create_branch_dialog(
+                                                            app_new_br.clone(),
+                                                            Some(h_br.clone()),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    }),
+                                            )
+                                            .separator()
+                                            .item(
+                                                PopupMenuItem::new("Cherry-pick commit")
+                                                    .icon(IconName::GitCommitHorizontal)
+                                                    .on_click(move |_, _, cx| {
+                                                        let h = h_cp.clone();
+                                                        app_cp.update(cx, |app, cx| {
+                                                            app.cherry_pick(h, cx);
+                                                        });
+                                                    }),
+                                            )
+                                            .item(
+                                                PopupMenuItem::new("Revert commit")
+                                                    .icon(IconName::RotateCcw)
+                                                    .on_click(move |_, _, cx| {
+                                                        let h = h_rev.clone();
+                                                        app_rev.update(cx, |app, cx| {
+                                                            app.revert_commit(h, cx);
+                                                        });
+                                                    }),
+                                            )
+                                            .item(
+                                                PopupMenuItem::new("Reset current branch to here…")
+                                                    .icon(IconName::Trash)
+                                                    .on_click(move |_, window, cx| {
+                                                        dialogs::open_reset_dialog(
+                                                            app_rst.clone(),
+                                                            h_rst.clone(),
+                                                            sh_rst.clone(),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    }),
+                                            )
+                                            .separator()
+                                            .item(
+                                                PopupMenuItem::new("Copy commit SHA")
+                                                    .icon(IconName::Copy)
+                                                    .on_click(move |_, window, cx| {
+                                                        cx.write_to_clipboard(
+                                                            ClipboardItem::new_string(
+                                                                h_copy.clone(),
+                                                            ),
+                                                        );
+                                                        super::notify_info(
+                                                            window,
+                                                            cx,
+                                                            "Copied commit SHA",
+                                                        );
+                                                    }),
+                                            )
+                                            .item(
+                                                PopupMenuItem::new("Copy commit message")
+                                                    .icon(IconName::Copy)
+                                                    .on_click(move |_, window, cx| {
+                                                        cx.write_to_clipboard(
+                                                            ClipboardItem::new_string(
+                                                                msg_copy.clone(),
+                                                            ),
+                                                        );
+                                                        super::notify_info(
+                                                            window,
+                                                            cx,
+                                                            "Copied commit message",
+                                                        );
+                                                    }),
+                                            )
                                         })
                                         .when(!is_filtered, |row| {
                                             row.child(graph_canvas::render_graph_cell(
@@ -372,6 +563,7 @@ pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl I
                                                             .flex_shrink_0()
                                                             .cursor_pointer()
                                                             .on_click(move |_, _, cx| {
+                                                                cx.stop_propagation();
                                                                 app_pr.update(cx, |app, cx| {
                                                                     app.active_tab =
                                                                         ActiveTab::PullRequests;
