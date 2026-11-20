@@ -1,0 +1,21 @@
+[package]
+name = "git-out"
+version = "0.1.0"
+edition = "2024"
+description = "Git Out - Native GPU-accelerated Git & GitHub (gh) desktop client"
+
+[[bin]]
+name = "gitout"
+path = "src/main.rs"
+
+[dependencies]
+gpui-kit = "0.10.0"
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+notify = "8"
+dirs = "6"
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+tempfile = "3"
