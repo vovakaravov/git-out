@@ -7,7 +7,9 @@ mod ui;
 mod watcher;
 
 use gpui_kit::assets::AllAssets;
-use gpui_kit::{AppContext as _, Bounds, WindowBounds, WindowOptions, px, size};
+use gpui_kit::{
+    AppContext as _, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size,
+};
 use std::path::PathBuf;
 
 fn main() {
@@ -26,6 +28,11 @@ fn main() {
             let bounds = Bounds::centered(None, size(px(1440.), px(900.)), cx);
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Git Out".into()),
+                    ..Default::default()
+                }),
+                app_id: Some("git-out".to_string()),
                 ..Default::default()
             };
 
