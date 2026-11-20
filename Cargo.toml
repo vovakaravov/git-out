@@ -3,6 +3,8 @@ name = "git-out"
 version = "0.1.0"
 edition = "2024"
 description = "Git Out - Native GPU-accelerated Git & GitHub (gh) desktop client"
+license = "MIT"
+repository = "https://github.com/vovakaravov/git-out"
 
 [[bin]]
 name = "gitout"
