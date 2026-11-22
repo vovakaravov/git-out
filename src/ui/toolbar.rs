@@ -5,7 +5,44 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{Disableable as _, Icon, Sizable as _, h_flex};
-use gpui_kit::{Context, InteractiveElement as _, IntoElement, ParentElement, StatefulInteractiveElement as _, Styled, div, prelude::FluentBuilder as _, px};
+use gpui_kit::{
+    AppContext as _, Context, InteractiveElement as _, IntoElement, ParentElement, Render,
+    StatefulInteractiveElement as _, Styled, Window, div, prelude::FluentBuilder as _, px,
+};
+
+#[derive(Clone)]
+struct DraggedRepoTab {
+    from_idx: usize,
+    name: String,
+}
+
+struct DraggedRepoTabPreview {
+    name: String,
+}
+
+impl Render for DraggedRepoTabPreview {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let blue = hex_color(gh_colors::BLUE);
+        h_flex()
+            .h(px(26.))
+            .px_2p5()
+            .gap_1p5()
+            .items_center()
+            .rounded(px(5.))
+            .bg(hex_color(gh_colors::CANVAS_DEFAULT))
+            .border_1()
+            .border_color(blue)
+            .opacity(0.92)
+            .child(Icon::new(IconName::FolderOpen).xsmall().text_color(blue))
+            .child(
+                div()
+                    .text_xs()
+                    .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                    .text_color(hex_color(gh_colors::FG))
+                    .child(self.name.clone()),
+            )
+    }
+}
 
 pub fn render_repo_tabs(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl IntoElement {
     let tab_bar_bg = hex_color(gh_colors::CANVAS_INSET);
@@ -69,6 +106,35 @@ pub fn render_repo_tabs(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl In
                             hex_color(gh_colors::BORDER_MUTED)
                         })
                         .hover(|s| s.bg(hex_color(gh_colors::BTN_BG)))
+                        .on_drag(
+                            DraggedRepoTab {
+                                from_idx: idx,
+                                name: name.clone(),
+                            },
+                            |drag, _, _, cx| {
+                                cx.new(|_| DraggedRepoTabPreview {
+                                    name: drag.name.clone(),
+                                })
+                            },
+                        )
+                        .drag_over::<DraggedRepoTab>(move |style, drag, _, _| {
+                            if drag.from_idx == idx {
+                                style
+                            } else if drag.from_idx > idx {
+                                style
+                                    .border_l_2()
+                                    .border_color(blue)
+                                    .bg(hex_color(gh_colors::BTN_BG))
+                            } else {
+                                style
+                                    .border_r_2()
+                                    .border_color(blue)
+                                    .bg(hex_color(gh_colors::BTN_BG))
+                            }
+                        })
+                        .on_drop(cx.listener(move |this, drag: &DraggedRepoTab, _, cx| {
+                            this.reorder_repo_tab(drag.from_idx, idx, cx);
+                        }))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.switch_to_repo_tab(idx, cx);
                         }))
@@ -110,17 +176,37 @@ pub fn render_repo_tabs(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl In
                                     this.close_repo_tab(idx, cx);
                                 })),
                         )
-                })),
-        )
-        .child(
-            Button::new("add-repo-tab")
-                .ghost()
-                .xsmall()
-                .icon(IconName::Plus)
-                .tooltip("Open repository in new tab (Ctrl+T)")
-                .on_click(move |_, window, cx| {
-                    dialogs::open_repo_dialog(app_for_add.clone(), window, cx);
-                }),
+                }))
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .on_drop(cx.listener(move |this, drag: &DraggedRepoTab, _, cx| {
+                            let last = this.open_repos.len().saturating_sub(1);
+                            this.reorder_repo_tab(drag.from_idx, last, cx);
+                        }))
+                        .child(
+                            Button::new("add-repo-tab")
+                                .ghost()
+                                .xsmall()
+                                .icon(IconName::Plus)
+                                .tooltip("Open repository in new tab (Ctrl+T)")
+                                .on_click(move |_, window, cx| {
+                                    dialogs::open_repo_dialog(app_for_add.clone(), window, cx);
+                                }),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .h_full()
+                        .drag_over::<DraggedRepoTab>(move |style, _, _, _| {
+                            style.border_l_2().border_color(blue)
+                        })
+                        .on_drop(cx.listener(move |this, drag: &DraggedRepoTab, _, cx| {
+                            let last = this.open_repos.len().saturating_sub(1);
+                            this.reorder_repo_tab(drag.from_idx, last, cx);
+                        })),
+                ),
         )
 }
 

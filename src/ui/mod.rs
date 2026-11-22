@@ -519,6 +519,14 @@ impl GitOutApp {
         cx.notify();
     }
 
+    pub fn reorder_repo_tab(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        if reorder_vec(&mut self.open_repos, from, to) {
+            self.config
+                .save_open_repos(&self.open_repos, self.repo_root.as_deref());
+            cx.notify();
+        }
+    }
+
     pub fn close_current_repo_tab(&mut self, cx: &mut Context<Self>) {
         if let Some(cur_idx) = self
             .repo_root
@@ -1678,4 +1686,36 @@ fn parse_diff_lenient(patch: &str) -> Vec<DiffFile> {
     }
     DiffFile::parse_with(patch, DiffParseOptions::new().truncated_hunks(true))
         .unwrap_or_default()
+}
+
+pub(crate) fn reorder_vec<T>(items: &mut Vec<T>, from: usize, to: usize) -> bool {
+    if from >= items.len() || to >= items.len() || from == to {
+        return false;
+    }
+    let item = items.remove(from);
+    items.insert(to, item);
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reorder_vec;
+
+    #[test]
+    fn reorder_vec_handles_moves_and_bounds() {
+        let mut repos = vec!["a", "b", "c", "d"];
+        assert!(reorder_vec(&mut repos, 0, 2));
+        assert_eq!(repos, vec!["b", "c", "a", "d"]);
+
+        assert!(reorder_vec(&mut repos, 3, 1));
+        assert_eq!(repos, vec!["b", "d", "c", "a"]);
+
+        assert!(reorder_vec(&mut repos, 1, 3));
+        assert_eq!(repos, vec!["b", "c", "a", "d"]);
+
+        assert!(!reorder_vec(&mut repos, 1, 1));
+        assert!(!reorder_vec(&mut repos, 0, 99));
+        assert!(!reorder_vec(&mut repos, 99, 0));
+        assert_eq!(repos, vec!["b", "c", "a", "d"]);
+    }
 }
