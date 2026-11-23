@@ -594,7 +594,7 @@ pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl I
                                                         .text_color(if commit.is_head {
                                                             fg
                                                         } else {
-                                                            hex_color(0xcddbd3)
+                                                            hex_color(0xc8c5b4)
                                                         })
                                                         .truncate()
                                                         .child(commit.subject.clone()),
