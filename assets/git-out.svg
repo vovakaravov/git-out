@@ -1,44 +1,21 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
-  <defs>
-    <linearGradient id="tile-bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#18202c"/>
-      <stop offset="100%" stop-color="#0d1117"/>
-    </linearGradient>
-    <linearGradient id="escape-glow" x1="0" y1="0.5" x2="1" y2="0.5">
-      <stop offset="0%" stop-color="#3fb950" stop-opacity="0.26"/>
-      <stop offset="100%" stop-color="#3fb950" stop-opacity="0"/>
-    </linearGradient>
-    <linearGradient id="escape-branch" x1="50" y1="74" x2="104" y2="64" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#58a6ff"/>
-      <stop offset="48%" stop-color="#39c5cf"/>
-      <stop offset="100%" stop-color="#3fb950"/>
-    </linearGradient>
-  </defs>
-
-  <!-- App badge tile matching Primer Dark canvas -->
-  <rect x="4" y="4" width="120" height="120" rx="26" fill="url(#tile-bg)" stroke="#30363d" stroke-width="3"/>
-
-  <!-- Subtle emerald exit spill through the open doorway -->
-  <polygon points="73,45 114,29 114,99 73,83" fill="url(#escape-glow)"/>
-
-  <!-- Open door leaf hinged on the left -->
-  <path d="M 27 26 L 40 33 L 40 95 L 27 102 Z" fill="#262c36" stroke="#444c56" stroke-width="2.5" stroke-linejoin="round"/>
-  <circle cx="36" cy="64" r="2.2" fill="#adbac7"/>
-
-  <!-- Crisp open doorway frame with wide right-side exit gap -->
-  <path d="M 72 42 L 72 24 L 26 24 L 26 104 L 72 104 L 72 86"
-        fill="none" stroke="#e6edf3" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
-
-  <!-- Git commit trunk inside the doorway -->
-  <line x1="53" y1="40" x2="53" y2="88" stroke="#58a6ff" stroke-width="5.5" stroke-linecap="round"/>
-
-  <!-- Escaping branch shooting out through the open doorway -->
-  <path d="M 53 76 C 53 64, 62 64, 73 64 L 101 64"
-        fill="none" stroke="url(#escape-branch)" stroke-width="6.5" stroke-linecap="round"/>
-  <path d="M 90 52 L 104 64 L 90 76"
-        fill="none" stroke="#3fb950" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>
-
-  <!-- Hollow commit nodes on the trunk -->
-  <circle cx="53" cy="40" r="6" fill="#0d1117" stroke="#58a6ff" stroke-width="4.5"/>
-  <circle cx="53" cy="87" r="6" fill="#0d1117" stroke="#58a6ff" stroke-width="4.5"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+ <rect style="opacity:0.2" x="4" y="5" width="56" height="56" rx="10" ry="10"/>
+ <rect style="fill:#26a65b" x="4" y="4" width="56" height="56" rx="10" ry="10"/>
+ <path style="fill:#ffffff;opacity:0.2" d="M 14,4 C 8.46,4 4,8.46 4,14 V 15 C 4,9.46 8.46,5 14,5 H 50 C 55.54,5 60,9.46 60,15 V 14 C 60,8.46 55.54,4 50,4 Z"/>
+ <path style="fill:#1b7a43" d="M 13,14 L 20,18 V 46 L 13,50 Z"/>
+ <circle style="fill:#b9f6ca" cx="17.6" cy="32" r="1.4"/>
+ <g style="opacity:0.2" transform="translate(0,1)" fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M 36,23 V 14 H 13 V 50 H 36 V 41" stroke-width="3.2"/>
+  <line x1="27" y1="21" x2="27" y2="43" stroke-width="3.2"/>
+  <path d="M 27,39 C 27,32 32,32 38,32 H 50" stroke-width="3.8"/>
+  <path d="M 44,25.5 L 51,32 L 44,38.5" stroke-width="3.8"/>
+  <circle cx="27" cy="21" r="3.2" fill="#000000" stroke="none"/>
+  <circle cx="27" cy="43" r="3.2" fill="#000000" stroke="none"/>
+ </g>
+ <path d="M 36,23 V 14 H 13 V 50 H 36 V 41" fill="none" stroke="#e8f5e9" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+ <line x1="27" y1="21" x2="27" y2="43" stroke="#b9f6ca" stroke-width="3.2" stroke-linecap="round"/>
+ <path d="M 27,39 C 27,32 32,32 38,32 H 50" fill="none" stroke="#ffffff" stroke-width="3.8" stroke-linecap="round"/>
+ <path d="M 44,25.5 L 51,32 L 44,38.5" fill="none" stroke="#ffffff" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round"/>
+ <circle cx="27" cy="21" r="3.2" fill="#26a65b" stroke="#b9f6ca" stroke-width="2.6"/>
+ <circle cx="27" cy="43" r="3.2" fill="#26a65b" stroke="#ffffff" stroke-width="2.6"/>
 </svg>
