@@ -1,18 +1,91 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
- <g style="opacity:0.22" transform="translate(0,1.5)">
-  <path d="M 7,11 L 22,5 L 24.5,6 V 11 H 41 V 22 H 37 V 42 H 41 V 53 H 24.5 V 58 L 22,59 L 7,53 Z"/>
-  <path d="M 31,40 C 31,32.5 36,32 42,32 H 55.5 M 48,24.5 L 56.5,32 L 48,39.5" fill="none" stroke="#000000" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round"/>
- </g>
- <rect style="fill:#0f4726" x="10" y="14" width="27" height="36" rx="1"/>
- <path style="fill:#1b7a43" d="M 7,11 H 40 C 40.8,11 41.5,11.7 41.5,12.5 V 22 H 37 V 15 H 11 V 49 H 37 V 42 H 41.5 V 51.5 C 41.5,52.3 40.8,53 40,53 H 7 Z"/>
- <polygon style="fill:#145a32" points="22,5 24.5,6 24.5,58 22,59"/>
- <polygon style="fill:#26a65b" points="7,11 22,5 22,59 7,53"/>
- <path style="fill:#ffffff;opacity:0.24" d="M 7,11 L 22,5 L 24.5,6 L 24.5,7.3 L 22,6.3 L 7,12.3 Z"/>
- <circle style="fill:#b9f6ca" cx="18.2" cy="32" r="1.9"/>
- <line x1="31" y1="21" x2="31" y2="43" stroke="#b9f6ca" stroke-width="3.2" stroke-linecap="round"/>
- <path d="M 31,40 C 31,32.5 36,32 42,32 H 55.5" fill="none" stroke="#2ecc71" stroke-width="4.2" stroke-linecap="round"/>
- <path d="M 48,24.5 L 56.5,32 L 48,39.5" fill="none" stroke="#2ecc71" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round"/>
- <path d="M 31,40 C 31,32.5 36,32 42,32 H 55.5 M 48,24.5 L 56.5,32 L 48,39.5" fill="none" stroke="#e8f5e9" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" opacity="0.65"/>
- <circle cx="31" cy="21" r="3.3" fill="#0f4726" stroke="#b9f6ca" stroke-width="2.5"/>
- <circle cx="31" cy="43" r="3.3" fill="#0f4726" stroke="#ffffff" stroke-width="2.5"/>
+  <!-- Far front-right tire behind axle -->
+  <ellipse cx="52.3" cy="48.6" rx="8.0" ry="2.2" fill="#000000" opacity="0.28"/>
+  <ellipse cx="54.5" cy="38.5" rx="6.4" ry="8.6" fill="#262e39" stroke="#3b4452" stroke-width="1.2"/>
+  <path d="M 50.5,30.4 L 54.5,29.9 A 6.4,8.6 0 0 1 54.5,47.1 L 50.5,47.6 Z" fill="#262e39"/>
+  <line x1="54.2" y1="32.8" x2="59.0" y2="32.3" stroke="#4a5564" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="55.3" y1="34.9" x2="60.1" y2="34.4" stroke="#4a5564" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="55.9" y1="36.9" x2="60.7" y2="36.4" stroke="#4a5564" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="56.1" y1="39.0" x2="60.9" y2="38.5" stroke="#4a5564" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="55.9" y1="41.1" x2="60.7" y2="40.6" stroke="#4a5564" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="55.3" y1="43.1" x2="60.1" y2="42.6" stroke="#4a5564" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="54.2" y1="45.2" x2="59.0" y2="44.7" stroke="#4a5564" stroke-width="1.5" stroke-linecap="round"/>
+  <ellipse cx="50.5" cy="39.0" rx="6.4" ry="8.6" fill="#161b22" stroke="#3c4553" stroke-width="2.4" stroke-dasharray="3.2 2.4"/>
+  <ellipse cx="50.5" cy="39.0" rx="5.9" ry="8.1" fill="#161b22"/>
+  <ellipse cx="50.5" cy="39.0" rx="3.3" ry="4.5" fill="#161b22" stroke="#30363d" stroke-width="1.2"/>
+
+  <!-- Rear-left tire -->
+  <ellipse cx="15.1" cy="51.6" rx="8.4" ry="2.2" fill="#000000" opacity="0.28"/>
+  <ellipse cx="17.1" cy="40.4" rx="7.0" ry="9.4" fill="#262e39" stroke="#3b4452" stroke-width="1.2"/>
+  <path d="M 13.5,31.8 L 17.1,31.0 A 7.0,9.4 0 0 1 17.1,49.8 L 13.5,50.6 Z" fill="#262e39"/>
+  <line x1="17.6" y1="34.5" x2="22.0" y2="33.7" stroke="#4a5564" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="18.8" y1="36.7" x2="23.2" y2="35.9" stroke="#4a5564" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="19.5" y1="39.0" x2="23.9" y2="38.2" stroke="#4a5564" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="19.7" y1="41.2" x2="24.1" y2="40.4" stroke="#4a5564" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="19.5" y1="43.4" x2="23.9" y2="42.6" stroke="#4a5564" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="18.8" y1="45.7" x2="23.2" y2="44.9" stroke="#4a5564" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="17.6" y1="47.9" x2="22.0" y2="47.1" stroke="#4a5564" stroke-width="1.5" stroke-linecap="round"/>
+  <ellipse cx="13.5" cy="41.2" rx="7.0" ry="9.4" fill="#161b22" stroke="#3c4553" stroke-width="2.5" stroke-dasharray="3.2 2.4"/>
+  <ellipse cx="13.5" cy="41.2" rx="6.5" ry="8.9" fill="#161b22"/>
+  <ellipse cx="13.5" cy="41.2" rx="5.4" ry="7.2" fill="none" stroke="#485360" stroke-width="1.1"/>
+  <ellipse cx="13.5" cy="41.2" rx="3.9" ry="5.3" fill="#0d1117" stroke="#58a6ff" stroke-width="2.0"/>
+  <ellipse cx="13.5" cy="41.2" rx="1.8" ry="2.4" fill="#e6edf3"/>
+  <circle cx="13.5" cy="41.2" r="0.9" fill="#161b22"/>
+
+  <!-- Lifted steel frame rail, front solid axle, diff pumpkin & coil-over shocks -->
+  <path d="M 10,27 L 44,28 L 56,26.5" fill="none" stroke="#2b333d" stroke-width="3.2" stroke-linecap="round"/>
+  <line x1="15" y1="41" x2="29" y2="30.5" stroke="#485360" stroke-width="2.4" stroke-linecap="round"/>
+  <line x1="31.5" y1="46.5" x2="51.5" y2="39.5" stroke="#485360" stroke-width="3.6" stroke-linecap="round"/>
+  <circle cx="43.2" cy="42.4" r="3.6" fill="#21262d" stroke="#58a6ff" stroke-width="1.7"/>
+  <circle cx="43.2" cy="42.4" r="1.2" fill="#e6edf3"/>
+  <line x1="31.5" y1="44.5" x2="34.5" y2="29.5" stroke="#58a6ff" stroke-width="2.4" stroke-linecap="round"/>
+  <line x1="50" y1="38.5" x2="47.5" y2="26.5" stroke="#58a6ff" stroke-width="2.2" stroke-linecap="round"/>
+  <line x1="32.4" y1="40" x2="33.8" y2="32.8" stroke="#a5d6ff" stroke-width="3.2" stroke-dasharray="1.3 1.5"/>
+
+  <!-- Bed rollbar & twin amber rally lights -->
+  <path d="M 18,19.5 V 12.2 Q 18,10.5 20.5,10.5 H 26" fill="none" stroke="#c9d1d9" stroke-width="2.1" stroke-linecap="round"/>
+  <circle cx="21.5" cy="9.2" r="1.6" fill="#ffd54f"/>
+  <circle cx="24.8" cy="9.2" r="1.6" fill="#ffb300"/>
+
+  <!-- 3/4 Pickup Body: Left Flank -->
+  <path d="M 6.5,27.5 L 7,19.5 L 22,18.2 L 25.5,10.2 L 38.5,10.5 L 43,19.2 L 43,29.2 L 38.5,29.5 C 36.5,25.8 26.5,25.5 24,29 L 18.5,28.5 C 16.5,25.5 10.5,25.5 8.5,28 Z"
+        fill="#1f6feb" stroke="#0d1117" stroke-width="0.9" stroke-linejoin="round"/>
+  <!-- Roof & Hood Top Planes -->
+  <polygon points="25.5,10.2 38.8,9.0 50.8,9.8 38.5,10.5" fill="#79c0ff"/>
+  <polygon points="43,19.2 55.2,17.8 59.8,20.8 43,22.0" fill="#58a6ff"/>
+  <!-- Side window -->
+  <polygon points="26.5,11.8 36.6,12.0 39.8,18.2 23.6,17.8" fill="#0d1117"/>
+
+  <!-- Front Face: Windshield, Grille, Headlights & Chrome Bullbar -->
+  <polygon points="38.5,10.5 50.8,9.8 54.6,17.8 43,19.2" fill="#0d1117" stroke="#58a6ff" stroke-width="0.8"/>
+  <line x1="43.5" y1="11.5" x2="41.5" y2="17.8" stroke="#79c0ff" stroke-width="1.3" stroke-linecap="round" opacity="0.65"/>
+  <polygon points="43,22.0 59.8,20.8 59.6,28.4 43,29.5" fill="#1f6feb" stroke="#0d1117" stroke-width="0.9" stroke-linejoin="round"/>
+  <polygon points="47.2,23.2 55.5,22.5 55.3,26.8 47.2,27.5" fill="#0d1117" stroke="#30363d" stroke-width="0.9"/>
+  <polygon points="43.6,23.2 46.2,23.0 46.2,25.6 43.6,25.8" fill="#ffffff"/>
+  <polygon points="56.5,22.2 59.0,22.0 59.0,24.6 56.5,24.8" fill="#ffffff"/>
+  <path d="M 41.5,29.5 L 60.4,28.2 L 59.4,25.5" fill="none" stroke="#e6edf3" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Crisp White Git Branch Fork mark on left door -->
+  <line x1="27.2" y1="20.6" x2="27.2" y2="25.5" stroke="#e6edf3" stroke-width="1.5" stroke-linecap="round"/>
+  <path d="M 27.2,24.4 C 27.2,22.5 30,22.2 32.5,22.4" fill="none" stroke="#e6edf3" stroke-width="1.5" stroke-linecap="round"/>
+  <circle cx="27.2" cy="20.6" r="1.2" fill="#e6edf3"/>
+  <circle cx="32.7" cy="22.4" r="1.2" fill="#79c0ff"/>
+
+  <!-- Hero Foreground Front-Left Giant Wheel -->
+  <ellipse cx="33.3" cy="58.9" rx="10.8" ry="2.2" fill="#000000" opacity="0.28"/>
+  <ellipse cx="35.8" cy="45.5" rx="9.0" ry="11.4" fill="#262e39" stroke="#3b4452" stroke-width="1.2"/>
+  <path d="M 31.2,35.1 L 35.8,34.1 A 9.0,11.4 0 0 1 35.8,56.9 L 31.2,57.9 Z" fill="#262e39"/>
+  <line x1="36.7" y1="38.3" x2="42.1" y2="37.3" stroke="#4a5564" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="38.3" y1="41.1" x2="43.7" y2="40.1" stroke="#4a5564" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="39.1" y1="43.8" x2="44.5" y2="42.8" stroke="#4a5564" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="39.4" y1="46.5" x2="44.8" y2="45.5" stroke="#4a5564" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="39.1" y1="49.2" x2="44.5" y2="48.2" stroke="#4a5564" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="38.3" y1="51.9" x2="43.7" y2="50.9" stroke="#4a5564" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="36.7" y1="54.7" x2="42.1" y2="53.7" stroke="#4a5564" stroke-width="1.5" stroke-linecap="round"/>
+  <ellipse cx="31.2" cy="46.5" rx="9.0" ry="11.4" fill="#161b22" stroke="#3c4553" stroke-width="3.0" stroke-dasharray="3.2 2.4"/>
+  <ellipse cx="31.2" cy="46.5" rx="8.5" ry="10.9" fill="#161b22"/>
+  <ellipse cx="31.2" cy="46.5" rx="6.9" ry="8.8" fill="none" stroke="#485360" stroke-width="1.1"/>
+  <ellipse cx="31.2" cy="46.5" rx="5.0" ry="6.4" fill="#0d1117" stroke="#58a6ff" stroke-width="2.0"/>
+  <ellipse cx="31.2" cy="46.5" rx="2.3" ry="2.9" fill="#e6edf3"/>
+  <circle cx="31.2" cy="46.5" r="0.9" fill="#161b22"/>
 </svg>

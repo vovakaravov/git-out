@@ -20,7 +20,6 @@ pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl I
     let fg = hex_color(gh_colors::FG);
     let fg_muted = hex_color(gh_colors::FG_MUTED);
     let fg_subtle = hex_color(gh_colors::FG_SUBTLE);
-    let accent = hex_color(gh_colors::ACCENT);
     let blue = hex_color(gh_colors::BLUE);
     let green = hex_color(gh_colors::GREEN_FG);
     let red = hex_color(gh_colors::RED_FG);
@@ -36,7 +35,7 @@ pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl I
             .justify_center()
             .p_6()
             .gap_3()
-            .child(Icon::new(IconName::GitGraph).large().text_color(accent))
+            .child(Icon::new(IconName::GitGraph).large().text_color(blue))
             .child(
                 div()
                     .text_base()
@@ -169,7 +168,7 @@ pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl I
                 .items_center()
                 .cursor_pointer()
                 .bg(if wip_selected {
-                    accent.opacity(0.14)
+                    blue.opacity(0.14)
                 } else if dirty {
                     orange.opacity(0.06)
                 } else {
@@ -346,9 +345,9 @@ pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl I
                                         .items_center()
                                         .cursor_pointer()
                                         .bg(if is_selected {
-                                            accent.opacity(0.16)
+                                            blue.opacity(0.16)
                                         } else if commit.is_head {
-                                            accent.opacity(0.06)
+                                            blue.opacity(0.05)
                                         } else {
                                             canvas_bg
                                         })
@@ -594,7 +593,7 @@ pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl I
                                                         .text_color(if commit.is_head {
                                                             fg
                                                         } else {
-                                                            hex_color(0xc8c5b4)
+                                                            hex_color(0xd0d7de)
                                                         })
                                                         .truncate()
                                                         .child(commit.subject.clone()),

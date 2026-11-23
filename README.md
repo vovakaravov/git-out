@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  A fast, zero-bloat native Git &amp; GitHub desktop client built in Rust + <a href="https://gpui.rs">GPUI</a> and powered by <code>git</code> and <code>gh</code> — styled in <strong>Kanagawa Dragon</strong> with a sage-emerald accent.
+  A fast, zero-bloat native Git &amp; GitHub desktop client built in Rust + <a href="https://gpui.rs">GPUI</a> and powered by <code>git</code> and <code>gh</code>.
 </p>
 
 ---

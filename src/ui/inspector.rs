@@ -52,7 +52,7 @@ fn render_wip_inspector(
     let fg_muted = hex_color(gh_colors::FG_MUTED);
     let green = hex_color(gh_colors::GREEN_FG);
     let orange = hex_color(gh_colors::ORANGE);
-    let accent = hex_color(gh_colors::ACCENT);
+    let blue = hex_color(gh_colors::BLUE);
 
     let app_entity = cx.entity();
     let has_staged = !snap.staged_files.is_empty();
@@ -160,7 +160,7 @@ fn render_wip_inspector(
                                 fg,
                                 fg_muted,
                                 orange,
-                                accent,
+                                blue,
                             )
                         }))
                         // Staged section
@@ -209,7 +209,7 @@ fn render_wip_inspector(
                                 fg,
                                 fg_muted,
                                 green,
-                                accent,
+                                blue,
                             )
                         })),
                 ),
@@ -283,7 +283,7 @@ fn render_wip_file_row(
     fg: gpui_kit::Hsla,
     fg_muted: gpui_kit::Hsla,
     badge_color: gpui_kit::Hsla,
-    accent: gpui_kit::Hsla,
+    blue: gpui_kit::Hsla,
 ) -> impl IntoElement {
     let f_select = file.clone();
     let f_action = file.clone();
@@ -300,13 +300,13 @@ fn render_wip_file_row(
         .items_center()
         .justify_between()
         .bg(if is_selected {
-            accent.opacity(0.15)
+            blue.opacity(0.15)
         } else {
             hex_color(gh_colors::CANVAS_DEFAULT)
         })
         .border_1()
         .border_color(if is_selected {
-            accent.opacity(0.5)
+            blue.opacity(0.5)
         } else {
             hex_color(gh_colors::BORDER_MUTED)
         })
@@ -422,7 +422,7 @@ fn render_commit_inspector(
     let border = hex_color(gh_colors::BORDER);
     let fg = hex_color(gh_colors::FG);
     let fg_muted = hex_color(gh_colors::FG_MUTED);
-    let accent = hex_color(gh_colors::ACCENT);
+    let blue = hex_color(gh_colors::BLUE);
     let green = hex_color(gh_colors::GREEN_FG);
     let orange = hex_color(gh_colors::ORANGE);
 
@@ -644,7 +644,7 @@ fn render_commit_inspector(
                                     .items_center()
                                     .cursor_pointer()
                                     .bg(if is_sel {
-                                        accent.opacity(0.15)
+                                        blue.opacity(0.15)
                                     } else {
                                         canvas_bg
                                     })

@@ -1,48 +1,45 @@
 use gpui_kit::component::{Theme, ThemeMode};
 use gpui_kit::{App, Hsla, px, rgb, rgba};
 
-/// Kanagawa Dragon charcoal with a whisper-subtle pine tint & sage-emerald accent.
+/// GitHub Primer Dark Default color palette.
 pub mod gh_colors {
-    pub const CANVAS_DEFAULT: u32 = 0x161817;
-    pub const CANVAS_SUBTLE: u32 = 0x1b1e1c;
-    pub const CANVAS_INSET: u32 = 0x0c0e0d;
-    pub const CANVAS_OVERLAY: u32 = 0x242826;
+    pub const CANVAS_DEFAULT: u32 = 0x0d1117;
+    pub const CANVAS_SUBTLE: u32 = 0x161b22;
+    pub const CANVAS_INSET: u32 = 0x010409;
+    pub const CANVAS_OVERLAY: u32 = 0x161b22;
 
-    pub const BTN_BG: u32 = 0x333835;
-    pub const BTN_HOVER: u32 = 0x404642;
-    pub const BTN_ACTIVE: u32 = 0x2b302d;
+    pub const BTN_BG: u32 = 0x21262d;
+    pub const BTN_HOVER: u32 = 0x30363d;
+    pub const BTN_ACTIVE: u32 = 0x282e33;
 
-    pub const BORDER: u32 = 0x363c38;
-    pub const BORDER_MUTED: u32 = 0x262b28;
+    pub const BORDER: u32 = 0x30363d;
+    pub const BORDER_MUTED: u32 = 0x21262d;
 
-    pub const FG: u32 = 0xdcd7ba;
-    pub const FG_MUTED: u32 = 0x7e837c;
-    pub const FG_SUBTLE: u32 = 0x9e9b93;
+    pub const FG: u32 = 0xe6edf3;
+    pub const FG_MUTED: u32 = 0x8b949e;
+    pub const FG_SUBTLE: u32 = 0x6e7681;
 
-    pub const ACCENT: u32 = 0x7eb88a;
-    pub const ACCENT_EMPHASIS: u32 = 0x4b8f62;
+    pub const BLUE: u32 = 0x58a6ff;
+    pub const BLUE_EMPHASIS: u32 = 0x1f6feb;
 
-    pub const BLUE: u32 = 0x7fb4ca;
-    pub const BLUE_EMPHASIS: u32 = 0x5c8fa8;
+    pub const GREEN_BTN: u32 = 0x238636;
+    pub const GREEN_BTN_HOVER: u32 = 0x2ea043;
+    pub const GREEN_BTN_ACTIVE: u32 = 0x29903b;
+    pub const GREEN_FG: u32 = 0x3fb950;
 
-    pub const GREEN_BTN: u32 = 0x3f8458;
-    pub const GREEN_BTN_HOVER: u32 = 0x4e9969;
-    pub const GREEN_BTN_ACTIVE: u32 = 0x35724b;
-    pub const GREEN_FG: u32 = 0x7eb88a;
+    pub const RED_BTN: u32 = 0xda3633;
+    pub const RED_BTN_HOVER: u32 = 0xf85149;
+    pub const RED_FG: u32 = 0xf85149;
 
-    pub const RED_BTN: u32 = 0xb85955;
-    pub const RED_BTN_HOVER: u32 = 0xc96b67;
-    pub const RED_FG: u32 = 0xd47772;
+    pub const YELLOW: u32 = 0xd29922;
+    pub const PURPLE: u32 = 0xa371f7;
+    pub const ORANGE: u32 = 0xf0883e;
+    pub const PINK: u32 = 0xf778ba;
+    pub const CYAN: u32 = 0x39c5cf;
 
-    pub const YELLOW: u32 = 0xc4b28a;
-    pub const PURPLE: u32 = 0x957fb8;
-    pub const ORANGE: u32 = 0xc89574;
-    pub const PINK: u32 = 0xb58ea8;
-    pub const CYAN: u32 = 0x7aa89f;
-
-    /// Subway rail colors for the commit graph lanes.
+    /// Subway rail colors for the commit graph lanes (GitHub Primer accents).
     pub const RAIL_COLORS: [u32; 8] = [
-        GREEN_FG, BLUE, PURPLE, ORANGE, PINK, CYAN, YELLOW, RED_FG,
+        BLUE, GREEN_FG, PURPLE, ORANGE, PINK, CYAN, YELLOW, RED_FG,
     ];
 }
 
@@ -144,12 +141,12 @@ pub fn apply_github_dark_theme(cx: &mut App) {
 
         c.danger = hex_color(gh_colors::RED_BTN);
         c.danger_hover = hex_color(gh_colors::RED_BTN_HOVER);
-        c.danger_active = hex_color(0x9c4845);
+        c.danger_active = hex_color(0xb62324);
         c.danger_foreground = hex_color(0xffffff);
 
         c.button_danger = hex_color(gh_colors::RED_BTN);
         c.button_danger_hover = hex_color(gh_colors::RED_BTN_HOVER);
-        c.button_danger_active = hex_color(0x9c4845);
+        c.button_danger_active = hex_color(0xb62324);
         c.button_danger_foreground = hex_color(0xffffff);
 
         c.success = hex_color(gh_colors::GREEN_BTN);
@@ -162,8 +159,8 @@ pub fn apply_github_dark_theme(cx: &mut App) {
         c.button_success_foreground = hex_color(0xffffff);
 
         c.info = hex_color(gh_colors::BLUE_EMPHASIS);
-        c.info_hover = hex_color(0x72a5bd);
-        c.info_active = hex_color(0x4d7c94);
+        c.info_hover = hex_color(0x388bfd);
+        c.info_active = hex_color(0x1158c7);
         c.info_foreground = hex_color(0xffffff);
 
         c.warning = hex_color(gh_colors::YELLOW);
@@ -181,21 +178,21 @@ pub fn apply_github_dark_theme(cx: &mut App) {
         c.status_bar_border = hex_color(gh_colors::BORDER);
 
         c.input = hex_color(gh_colors::BORDER);
-        c.ring = hex_color(gh_colors::ACCENT);
-        c.caret = hex_color(gh_colors::ACCENT);
-        c.selection = hex_alpha(0x4b8f624d);
+        c.ring = hex_color(gh_colors::BLUE);
+        c.caret = hex_color(gh_colors::BLUE);
+        c.selection = hex_alpha(0x1f6feb4d);
 
-        c.link = hex_color(gh_colors::ACCENT);
-        c.link_hover = hex_color(0x98cfa3);
-        c.link_active = hex_color(gh_colors::ACCENT_EMPHASIS);
+        c.link = hex_color(gh_colors::BLUE);
+        c.link_hover = hex_color(0x79c0ff);
+        c.link_active = hex_color(gh_colors::BLUE_EMPHASIS);
 
         c.list = hex_color(gh_colors::CANVAS_DEFAULT);
         c.list_even = hex_color(gh_colors::CANVAS_DEFAULT);
         c.list_head = hex_color(gh_colors::CANVAS_SUBTLE);
         c.list_hover = hex_color(gh_colors::CANVAS_SUBTLE);
-        c.list_active = hex_alpha(0x4b8f622a);
-        c.list_active_border = hex_color(gh_colors::ACCENT_EMPHASIS);
-        c.list_highlight_foreground = hex_color(gh_colors::ACCENT);
+        c.list_active = hex_alpha(0x1f6feb26);
+        c.list_active_border = hex_color(gh_colors::BLUE_EMPHASIS);
+        c.list_highlight_foreground = hex_color(gh_colors::BLUE);
 
         c.tab_bar = hex_color(gh_colors::CANVAS_INSET);
         c.tab_bar_segmented = hex_color(gh_colors::CANVAS_SUBTLE);
@@ -205,8 +202,8 @@ pub fn apply_github_dark_theme(cx: &mut App) {
         c.tab_active_foreground = hex_color(gh_colors::FG);
 
         c.scrollbar = hex_alpha(0x00000000);
-        c.scrollbar_thumb = hex_alpha(0x7e837c66);
-        c.scrollbar_thumb_hover = hex_alpha(0x9e9b93aa);
+        c.scrollbar_thumb = hex_alpha(0x6e768180);
+        c.scrollbar_thumb_hover = hex_alpha(0x8b949ecc);
 
         c.red = hex_color(gh_colors::RED_FG);
         c.green = hex_color(gh_colors::GREEN_FG);
