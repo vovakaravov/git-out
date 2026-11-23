@@ -33,10 +33,10 @@
   - One-click **Fetch**, **Pull** (`↓N`), **Push** (`↑N`, auto-sets upstream), **Branch**, **Stash**, **Pop**, and **Refresh**.
   - Collapsible sidebar for **Local** branches, **Remotes**, **Tags**, **Stashes** (Apply / Pop / Drop), and open **Pull Requests**.
 - **Working Tree Staging & Commit Inspector**
-  - Pinned **WIP** row at the top of the graph for full-file staging, unstaging, discarding, commit message + description composing, and amending.
-  - Click any commit to **Checkout**, create a **Branch**, **Cherry-pick**, **Revert**, or **Reset** (`Soft` / `Mixed` / `Hard`), with **Unified** and **Split** diff views.
+  - Pinned **WIP** row at the top of the graph for full-file staging, unstaging, discarding, commit message + description composing, and amending, plus a right-click context menu (**Stage all**, **Unstage all**, **Stash**, **Pop latest stash**).
+  - Click any commit to inspect **Unified** or **Split** diffs; **double-click** commits or sidebar branches to check them out quickly; or **right-click** commits (**Checkout**, **Create branch here**, **Cherry-pick**, **Revert**, **Reset…**, **Copy SHA / message**) and branches (**Checkout**, **Merge into current**, **Create branch from here**, **Delete**, **Copy name**).
 - **Multi-Repo Tabs**
-  - Keep multiple repositories open in tabs with cached instant switching and session persistence.
+  - Keep multiple repositories open in **drag-to-reorder** tabs (with the `+` new-tab button pinned beside the last tab), cached instant switching, and session persistence.
 - **Seamless `gh` GitHub Browser**
   - **PRs:** Filter (`Open` / `Merged` / `Closed` / `All`), view Markdown descriptions, CI check statuses, full review history (`Approved` / `Changes Requested` / `Commented`), **Files Changed** diffs, post comments, **Review…** (`gh pr review`), **Ready for Review** (`gh pr ready`), **Checkout PR**, **Create PR**, and **Merge…** (`Squash` / `Merge` / `Rebase`).
   - **Actions:** Browse workflow runs, inspect job & step statuses, view failing logs directly via `gh run view --log-failed`, and trigger **Rerun Failed Jobs**.
