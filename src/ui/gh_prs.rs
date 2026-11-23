@@ -42,7 +42,7 @@ fn render_pr_list(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl IntoElem
     let border = hex_color(gh_colors::BORDER);
     let fg = hex_color(gh_colors::FG);
     let fg_muted = hex_color(gh_colors::FG_MUTED);
-    let blue = hex_color(gh_colors::BLUE);
+    let accent = hex_color(gh_colors::ACCENT);
     let green = hex_color(gh_colors::GREEN_FG);
     let red = hex_color(gh_colors::RED_FG);
     let yellow = hex_color(gh_colors::YELLOW);
@@ -174,13 +174,13 @@ fn render_pr_list(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl IntoElem
                                 .rounded(px(6.))
                                 .cursor_pointer()
                                 .bg(if is_sel {
-                                    blue.opacity(0.14)
+                                    accent.opacity(0.14)
                                 } else {
                                     canvas_bg
                                 })
                                 .border_1()
                                 .border_color(if is_sel {
-                                    blue.opacity(0.5)
+                                    accent.opacity(0.5)
                                 } else {
                                     hex_color(gh_colors::BORDER_MUTED)
                                 })

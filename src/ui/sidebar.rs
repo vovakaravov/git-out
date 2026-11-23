@@ -89,7 +89,7 @@ pub fn render_sidebar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                                     .items_center()
                                     .justify_between()
                                     .bg(if is_head {
-                                        blue.opacity(0.12)
+                                        green.opacity(0.14)
                                     } else {
                                         gpui_kit::transparent_black()
                                     })

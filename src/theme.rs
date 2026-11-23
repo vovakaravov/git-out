@@ -1,45 +1,48 @@
 use gpui_kit::component::{Theme, ThemeMode};
 use gpui_kit::{App, Hsla, px, rgb, rgba};
 
-/// GitHub Primer Dark Default color palette.
+/// Emerald Pine Dark color palette tailored to Git Out's emerald identity.
 pub mod gh_colors {
-    pub const CANVAS_DEFAULT: u32 = 0x0d1117;
-    pub const CANVAS_SUBTLE: u32 = 0x161b22;
-    pub const CANVAS_INSET: u32 = 0x010409;
-    pub const CANVAS_OVERLAY: u32 = 0x161b22;
+    pub const CANVAS_DEFAULT: u32 = 0x0d1612;
+    pub const CANVAS_SUBTLE: u32 = 0x121e18;
+    pub const CANVAS_INSET: u32 = 0x080e0b;
+    pub const CANVAS_OVERLAY: u32 = 0x16241d;
 
-    pub const BTN_BG: u32 = 0x21262d;
-    pub const BTN_HOVER: u32 = 0x30363d;
-    pub const BTN_ACTIVE: u32 = 0x282e33;
+    pub const BTN_BG: u32 = 0x1d2e25;
+    pub const BTN_HOVER: u32 = 0x273e32;
+    pub const BTN_ACTIVE: u32 = 0x182720;
 
-    pub const BORDER: u32 = 0x30363d;
-    pub const BORDER_MUTED: u32 = 0x21262d;
+    pub const BORDER: u32 = 0x283f33;
+    pub const BORDER_MUTED: u32 = 0x1a2b22;
 
-    pub const FG: u32 = 0xe6edf3;
-    pub const FG_MUTED: u32 = 0x8b949e;
-    pub const FG_SUBTLE: u32 = 0x6e7681;
+    pub const FG: u32 = 0xe5f1ea;
+    pub const FG_MUTED: u32 = 0x82998c;
+    pub const FG_SUBTLE: u32 = 0x5f7568;
+
+    pub const ACCENT: u32 = 0x3fd07d;
+    pub const ACCENT_EMPHASIS: u32 = 0x239653;
 
     pub const BLUE: u32 = 0x58a6ff;
     pub const BLUE_EMPHASIS: u32 = 0x1f6feb;
 
-    pub const GREEN_BTN: u32 = 0x238636;
-    pub const GREEN_BTN_HOVER: u32 = 0x2ea043;
-    pub const GREEN_BTN_ACTIVE: u32 = 0x29903b;
-    pub const GREEN_FG: u32 = 0x3fb950;
+    pub const GREEN_BTN: u32 = 0x228b4d;
+    pub const GREEN_BTN_HOVER: u32 = 0x2ba35c;
+    pub const GREEN_BTN_ACTIVE: u32 = 0x1d7842;
+    pub const GREEN_FG: u32 = 0x3fd07d;
 
     pub const RED_BTN: u32 = 0xda3633;
     pub const RED_BTN_HOVER: u32 = 0xf85149;
     pub const RED_FG: u32 = 0xf85149;
 
-    pub const YELLOW: u32 = 0xd29922;
-    pub const PURPLE: u32 = 0xa371f7;
+    pub const YELLOW: u32 = 0xd9a636;
+    pub const PURPLE: u32 = 0xa87ef7;
     pub const ORANGE: u32 = 0xf0883e;
     pub const PINK: u32 = 0xf778ba;
     pub const CYAN: u32 = 0x39c5cf;
 
-    /// Subway rail colors for the commit graph lanes (GitHub Primer accents).
+    /// Subway rail colors for the commit graph lanes.
     pub const RAIL_COLORS: [u32; 8] = [
-        BLUE, GREEN_FG, PURPLE, ORANGE, PINK, CYAN, YELLOW, RED_FG,
+        GREEN_FG, BLUE, PURPLE, ORANGE, PINK, CYAN, YELLOW, RED_FG,
     ];
 }
 
@@ -178,21 +181,21 @@ pub fn apply_github_dark_theme(cx: &mut App) {
         c.status_bar_border = hex_color(gh_colors::BORDER);
 
         c.input = hex_color(gh_colors::BORDER);
-        c.ring = hex_color(gh_colors::BLUE);
-        c.caret = hex_color(gh_colors::BLUE);
-        c.selection = hex_alpha(0x1f6feb4d);
+        c.ring = hex_color(gh_colors::ACCENT);
+        c.caret = hex_color(gh_colors::ACCENT);
+        c.selection = hex_alpha(0x2396534d);
 
-        c.link = hex_color(gh_colors::BLUE);
-        c.link_hover = hex_color(0x79c0ff);
-        c.link_active = hex_color(gh_colors::BLUE_EMPHASIS);
+        c.link = hex_color(gh_colors::ACCENT);
+        c.link_hover = hex_color(0x6ee29f);
+        c.link_active = hex_color(gh_colors::ACCENT_EMPHASIS);
 
         c.list = hex_color(gh_colors::CANVAS_DEFAULT);
         c.list_even = hex_color(gh_colors::CANVAS_DEFAULT);
         c.list_head = hex_color(gh_colors::CANVAS_SUBTLE);
         c.list_hover = hex_color(gh_colors::CANVAS_SUBTLE);
-        c.list_active = hex_alpha(0x1f6feb26);
-        c.list_active_border = hex_color(gh_colors::BLUE_EMPHASIS);
-        c.list_highlight_foreground = hex_color(gh_colors::BLUE);
+        c.list_active = hex_alpha(0x2396532a);
+        c.list_active_border = hex_color(gh_colors::ACCENT_EMPHASIS);
+        c.list_highlight_foreground = hex_color(gh_colors::ACCENT);
 
         c.tab_bar = hex_color(gh_colors::CANVAS_INSET);
         c.tab_bar_segmented = hex_color(gh_colors::CANVAS_SUBTLE);
@@ -202,8 +205,8 @@ pub fn apply_github_dark_theme(cx: &mut App) {
         c.tab_active_foreground = hex_color(gh_colors::FG);
 
         c.scrollbar = hex_alpha(0x00000000);
-        c.scrollbar_thumb = hex_alpha(0x6e768180);
-        c.scrollbar_thumb_hover = hex_alpha(0x8b949ecc);
+        c.scrollbar_thumb = hex_alpha(0x5f756880);
+        c.scrollbar_thumb_hover = hex_alpha(0x82998ccc);
 
         c.red = hex_color(gh_colors::RED_FG);
         c.green = hex_color(gh_colors::GREEN_FG);

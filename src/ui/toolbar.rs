@@ -22,7 +22,7 @@ struct DraggedRepoTabPreview {
 
 impl Render for DraggedRepoTabPreview {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let blue = hex_color(gh_colors::BLUE);
+        let accent = hex_color(gh_colors::ACCENT);
         h_flex()
             .h(px(26.))
             .px_2p5()
@@ -31,9 +31,9 @@ impl Render for DraggedRepoTabPreview {
             .rounded(px(5.))
             .bg(hex_color(gh_colors::CANVAS_DEFAULT))
             .border_1()
-            .border_color(blue)
+            .border_color(accent)
             .opacity(0.92)
-            .child(Icon::new(IconName::FolderOpen).xsmall().text_color(blue))
+            .child(Icon::new(IconName::FolderOpen).xsmall().text_color(accent))
             .child(
                 div()
                     .text_xs()
@@ -51,7 +51,7 @@ pub fn render_repo_tabs(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl In
     let border = hex_color(gh_colors::BORDER);
     let fg = hex_color(gh_colors::FG);
     let fg_muted = hex_color(gh_colors::FG_MUTED);
-    let blue = hex_color(gh_colors::BLUE);
+    let accent = hex_color(gh_colors::ACCENT);
     let app_for_add = cx.entity();
 
     h_flex()
@@ -101,7 +101,7 @@ pub fn render_repo_tabs(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl In
                         .bg(if is_active { active_bg } else { inactive_bg })
                         .border_1()
                         .border_color(if is_active {
-                            blue.opacity(0.6)
+                            accent.opacity(0.6)
                         } else {
                             hex_color(gh_colors::BORDER_MUTED)
                         })
@@ -123,12 +123,12 @@ pub fn render_repo_tabs(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl In
                             } else if drag.from_idx > idx {
                                 style
                                     .border_l_2()
-                                    .border_color(blue)
+                                    .border_color(accent)
                                     .bg(hex_color(gh_colors::BTN_BG))
                             } else {
                                 style
                                     .border_r_2()
-                                    .border_color(blue)
+                                    .border_color(accent)
                                     .bg(hex_color(gh_colors::BTN_BG))
                             }
                         })
@@ -141,7 +141,7 @@ pub fn render_repo_tabs(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl In
                         .child(
                             Icon::new(IconName::FolderOpen)
                                 .xsmall()
-                                .text_color(if is_active { blue } else { fg_muted }),
+                                .text_color(if is_active { accent } else { fg_muted }),
                         )
                         .child(
                             div()
@@ -159,9 +159,9 @@ pub fn render_repo_tabs(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl In
                                 div()
                                     .px_1()
                                     .rounded(px(3.))
-                                    .bg(blue.opacity(0.14))
+                                    .bg(accent.opacity(0.14))
                                     .text_xs()
-                                    .text_color(blue)
+                                    .text_color(accent)
                                     .child(br),
                             )
                         })
@@ -200,7 +200,7 @@ pub fn render_repo_tabs(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl In
                         .flex_1()
                         .h_full()
                         .drag_over::<DraggedRepoTab>(move |style, _, _, _| {
-                            style.border_l_2().border_color(blue)
+                            style.border_l_2().border_color(accent)
                         })
                         .on_drop(cx.listener(move |this, drag: &DraggedRepoTab, _, cx| {
                             let last = this.open_repos.len().saturating_sub(1);
@@ -214,7 +214,7 @@ pub fn render_toolbar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
     let header_bg = hex_color(gh_colors::CANVAS_INSET);
     let border = hex_color(gh_colors::BORDER);
     let fg = hex_color(gh_colors::FG);
-    let blue = hex_color(gh_colors::BLUE);
+    let accent = hex_color(gh_colors::ACCENT);
     let green = hex_color(gh_colors::GREEN_FG);
     let red = hex_color(gh_colors::RED_FG);
     let yellow = hex_color(gh_colors::YELLOW);
@@ -294,7 +294,7 @@ pub fn render_toolbar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                         .items_center()
                         .flex_shrink_0()
                         .pr_1()
-                        .child(Icon::new(IconName::GitGraph).text_color(blue))
+                        .child(Icon::new(IconName::GitGraph).text_color(accent))
                         .child(
                             div()
                                 .text_sm()
