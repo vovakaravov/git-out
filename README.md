@@ -26,15 +26,17 @@
 ## Features
 
 - **GPU-Rendered Commit Rail Graph**
-  - Topological lane layout with smooth Bezier branch/merge curves, `HEAD` halos, and merge indicators.
-  - Virtualized commit list with instant search/filtering by subject, author, branch/tag name, or SHA.
-  - Live **PR & CI status badges** overlaid directly onto branches in the graph.
-- **Chunky Action Toolbar & Sidebar**
-  - One-click **Fetch**, **Pull** (`↓N`), **Push** (`↑N`, auto-sets upstream), **Branch**, **Stash**, **Pop**, and **Refresh**.
-  - Collapsible sidebar for **Local** branches, **Remotes**, **Tags**, **Stashes** (Apply / Pop / Drop), and open **Pull Requests**.
-- **Working Tree Staging & Commit Inspector**
-  - Pinned **WIP** row at the top of the graph for full-file staging, unstaging, discarding, commit message + description composing, and amending, plus a right-click context menu (**Stage all**, **Unstage all**, **Stash**, **Pop latest stash**).
-  - Click any commit to inspect **Unified** or **Split** diffs; **double-click** commits or sidebar branches to check them out quickly; or **right-click** commits (**Checkout**, **Create branch here**, **Cherry-pick**, **Revert**, **Reset…**, **Copy SHA / message**) and branches (**Checkout**, **Merge into current**, **Create branch from here**, **Delete**, **Copy name**).
+  - Topological lane layout with smooth Bezier branch/merge curves, `HEAD` halos, GPG/SSH verified signature badges, and merge indicators.
+  - Virtualized commit list with instant search/filtering by subject, author, branch/tag name, SHA, **Current Branch / All Branches** toggle, **+500 Load More**, and **`git log -S` Code Pickaxe Search**.
+  - Live **PR & CI status badges** overlaid directly onto branches in the graph, plus an in-progress **Merge / Rebase / Cherry-pick / Revert / Bisect** status banner with **Continue / Skip / Abort** and Bisect controls.
+- **Chunky Action Toolbar, Command Palette & Sidebar**
+  - One-click **Fetch**, **Pull** (right-click for `--rebase` / `--ff-only`), **Push** (right-click for `--force-with-lease`), **Branch**, **Stash**, **Pop**, **Reflog Time Machine**, **File Blame/History Finder**, **Command Palette (`Ctrl+K`)**, and **Refresh**.
+  - Collapsible sidebar for **Local** branches (checkout, merge, rebase onto, compare, rename, safe `-d` / force `-D`), **Remote Branches** (merge, rebase, remote branch delete), **Tags** (create annotated/lightweight, push, delete local/remote), **Stashes** (apply, pop, diff preview, branch from stash, keep-index/untracked options), **Worktrees** (add, switch tab, remove), **Submodules** (status + `--init --recursive`), and **Remotes**.
+- **Hunk Staging, Line Staging, Conflict Resolver & Commit Inspector**
+  - **Hunk & Line Staging / Discarding:** Stage or unstage individual hunks or selected line ranges directly inside the inspector, discard individual hunks, toggle `-w` whitespace ignore and soft-wrap, and view **Unified** or **Split** diffs.
+  - **Interactive Merge Conflict Resolver:** Uses GPUI's native inline conflict resolver (`Accept Current` / `Incoming` / `Both`) alongside one-click **Use Ours**, **Use Theirs**, and **Save & Stage**.
+  - **Composer Power Controls:** Extended commit message description, **Amend** (with HEAD message prefill), **Sign (`-S`)**, and **Undo Last Commit (`HEAD~1`)** keeping changes staged.
+  - **Interactive Rebase (`git rebase -i`), File Blame & `--follow` History, Reflog Time Machine, Commit Range Compare (`A..B`), and `.patch` Export/Apply.**
 - **Multi-Repo Tabs**
   - Keep multiple repositories open in **drag-to-reorder** tabs (with the `+` new-tab button pinned beside the last tab), cached instant switching, and session persistence.
 - **Seamless `gh` GitHub Browser**
@@ -121,6 +123,9 @@ EOF
 | `Ctrl+Tab` | Switch to next repository tab |
 | `Ctrl+R` / `F5` | Refresh `git` snapshot & `gh` data |
 | `Ctrl+1` .. `Ctrl+4` | Switch between **Graph**, **PRs**, **Actions**, **Issues** |
+| `Ctrl+K` / `Ctrl+Shift+P` | Open **Command Palette** |
+| `Ctrl+Shift+R` | Open **Reflog Time Machine** |
+| `Ctrl+Shift+F` | Open **File History & Blame Finder** |
 | `Ctrl+\`` | Toggle **Command Log** drawer |
 
 ---

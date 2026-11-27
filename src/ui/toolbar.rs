@@ -1,8 +1,9 @@
-use super::{ActiveTab, GitOutApp, RemoteGitOp, dialogs};
+use super::{ActiveTab, GitOutApp, RemoteGitOp, command_palette, dialogs};
 use crate::gh::CiState;
 use crate::theme::{gh_colors, hex_color};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenuItem};
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{Disableable as _, Icon, Sizable as _, h_flex};
 use gpui_kit::{
@@ -258,6 +259,9 @@ pub fn render_toolbar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
     let app_for_repo = cx.entity();
     let app_for_branch = cx.entity();
     let app_for_stash = cx.entity();
+    let app_for_pull_menu = cx.entity();
+    let app_for_push_menu = cx.entity();
+    let app_for_palette = cx.entity();
 
     let pull_label = if behind > 0 {
         format!("Pull ↓{behind}")
@@ -280,7 +284,7 @@ pub fn render_toolbar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
         .border_b_1()
         .border_color(border)
         .items_center()
-        // Left: Brand + Repo Switcher (flex_1 + overflow_hidden keeps center buttons anchored)
+        // Left: Brand + Repo Switcher
         .child(
             h_flex()
                 .flex_1()
@@ -308,7 +312,7 @@ pub fn render_toolbar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                         .outline()
                         .h(px(36.))
                         .px_3()
-                        .max_w(px(260.))
+                        .max_w(px(250.))
                         .icon(IconName::FolderOpen)
                         .label(format!("{repo_name} · {branch_name}"))
                         .tooltip("Open or switch repository (Ctrl+O)")
@@ -317,16 +321,16 @@ pub fn render_toolbar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                         }),
                 ),
         )
-        // Center: Chunky GitKraken-style Git action bar
+        // Center: Chunky Git action bar
         .child(
             h_flex()
                 .flex_shrink_0()
-                .gap_2()
+                .gap_1p5()
                 .items_center()
                 .child(
                     Button::new("btn-fetch")
                         .h(px(36.))
-                        .px_3()
+                        .px_2p5()
                         .icon(IconName::CloudDownload)
                         .label("Fetch")
                         .loading(app.active_remote_op == Some(RemoteGitOp::Fetch))
@@ -337,36 +341,86 @@ pub fn render_toolbar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                         })),
                 )
                 .child(
-                    Button::new("btn-pull")
-                        .h(px(36.))
-                        .px_3()
-                        .icon(IconName::ArrowDown)
-                        .label(pull_label)
-                        .loading(app.active_remote_op == Some(RemoteGitOp::Pull))
-                        .disabled(!has_repo || remote_busy)
-                        .tooltip("git pull")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.pull(cx);
-                        })),
+                    div()
+                        .id("pull-ctx-wrap")
+                        .context_menu(move |menu, _, _| {
+                            let a1 = app_for_pull_menu.clone();
+                            let a2 = app_for_pull_menu.clone();
+                            let a3 = app_for_pull_menu.clone();
+                            menu.label("Pull Strategy")
+                                .item(
+                                    PopupMenuItem::new("Pull (default)")
+                                        .icon(IconName::ArrowDown)
+                                        .on_click(move |_, _, cx| a1.update(cx, |a, cx| a.pull(cx))),
+                                )
+                                .item(
+                                    PopupMenuItem::new("Pull (Rebase)")
+                                        .icon(IconName::GitCommitHorizontal)
+                                        .on_click(move |_, _, cx| {
+                                            a2.update(cx, |a, cx| a.pull_rebase(cx))
+                                        }),
+                                )
+                                .item(
+                                    PopupMenuItem::new("Pull (Fast-Forward Only)")
+                                        .icon(IconName::Check)
+                                        .on_click(move |_, _, cx| {
+                                            a3.update(cx, |a, cx| a.pull_ff_only(cx))
+                                        }),
+                                )
+                        })
+                        .child(
+                            Button::new("btn-pull")
+                                .h(px(36.))
+                                .px_2p5()
+                                .icon(IconName::ArrowDown)
+                                .label(pull_label)
+                                .loading(app.active_remote_op == Some(RemoteGitOp::Pull))
+                                .disabled(!has_repo || remote_busy)
+                                .tooltip("git pull (right-click for Rebase / FF-only)")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.pull(cx);
+                                })),
+                        ),
                 )
                 .child(
-                    Button::new("btn-push")
-                        .h(px(36.))
-                        .px_3()
-                        .icon(IconName::ArrowUp)
-                        .label(push_label)
-                        .loading(app.active_remote_op == Some(RemoteGitOp::Push))
-                        .disabled(!has_repo || remote_busy)
-                        .tooltip("git push (auto-sets upstream if missing)")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.push(cx);
-                        })),
+                    div()
+                        .id("push-ctx-wrap")
+                        .context_menu(move |menu, _, _| {
+                            let a1 = app_for_push_menu.clone();
+                            let a2 = app_for_push_menu.clone();
+                            menu.label("Push Strategy")
+                                .item(
+                                    PopupMenuItem::new("Push")
+                                        .icon(IconName::ArrowUp)
+                                        .on_click(move |_, _, cx| a1.update(cx, |a, cx| a.push(cx))),
+                                )
+                                .item(
+                                    PopupMenuItem::new("Force Push (--force-with-lease)")
+                                        .icon(IconName::TriangleAlert)
+                                        .on_click(move |_, _, cx| {
+                                            a2.update(cx, |a, cx| a.push_force_with_lease(cx))
+                                        }),
+                                )
+                        })
+                        .child(
+                            Button::new("btn-push")
+                                .h(px(36.))
+                                .px_2p5()
+                                .icon(IconName::ArrowUp)
+                                .label(push_label)
+                                .loading(app.active_remote_op == Some(RemoteGitOp::Push))
+                                .disabled(!has_repo || remote_busy)
+                                .tooltip("git push (right-click for --force-with-lease)")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.push(cx);
+                                })),
+                        ),
                 )
-                .child(div().w(px(1.)).h(px(22.)).bg(border).mx_1())
+                .child(div().w(px(1.)).h(px(22.)).bg(border).mx_0p5())
                 .child(
                     Button::new("btn-branch")
                         .h(px(36.))
-                        .px_3()
+                        .px_2p5()
                         .icon(IconName::GitBranchPlus)
                         .label("Branch")
                         .disabled(!has_repo)
@@ -383,7 +437,7 @@ pub fn render_toolbar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                 .child(
                     Button::new("btn-stash")
                         .h(px(36.))
-                        .px_3()
+                        .px_2p5()
                         .icon(IconName::Archive)
                         .label("Stash")
                         .disabled(!has_repo || !has_dirty)
@@ -395,13 +449,36 @@ pub fn render_toolbar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                 .child(
                     Button::new("btn-pop")
                         .h(px(36.))
-                        .px_3()
+                        .px_2p5()
                         .icon(IconName::ArchiveRestore)
                         .label("Pop")
                         .disabled(!has_repo || !has_stashes)
                         .tooltip("Pop latest stash")
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.stash_pop(None, cx);
+                        })),
+                )
+                .child(div().w(px(1.)).h(px(22.)).bg(border).mx_0p5())
+                .child(
+                    Button::new("btn-reflog")
+                        .h(px(36.))
+                        .w(px(36.))
+                        .icon(IconName::Clock)
+                        .disabled(!has_repo)
+                        .tooltip("Reflog Time Machine (Ctrl+Shift+R)")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.open_reflog(cx);
+                        })),
+                )
+                .child(
+                    Button::new("btn-file-finder")
+                        .h(px(36.))
+                        .w(px(36.))
+                        .icon(IconName::FileSearch)
+                        .disabled(!has_repo)
+                        .tooltip("File History & Blame Finder (Ctrl+Shift+F)")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.open_file_finder(cx);
                         })),
                 )
                 .child(
@@ -416,18 +493,18 @@ pub fn render_toolbar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                         })),
                 ),
         )
-        // Right: Mode Tabs + Open on GitHub + Cmd Log
+        // Right: Mode Tabs + Palette + Open on GitHub + Cmd Log
         .child(
             h_flex()
                 .flex_1()
                 .min_w_0()
                 .justify_end()
-                .gap_2()
+                .gap_1p5()
                 .items_center()
                 .child(
                     h_flex()
                         .p(px(3.))
-                        .gap_1()
+                        .gap_0p5()
                         .rounded(px(7.))
                         .bg(hex_color(gh_colors::CANVAS_SUBTLE))
                         .border_1()
@@ -483,6 +560,20 @@ pub fn render_toolbar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                             }),
                         )),
                 )
+                .child(
+                    Button::new("btn-palette")
+                        .h(px(36.))
+                        .w(px(36.))
+                        .icon(IconName::Command)
+                        .tooltip("Command Palette (Ctrl+K)")
+                        .on_click(move |_, window, cx| {
+                            command_palette::open_command_palette(
+                                app_for_palette.clone(),
+                                window,
+                                cx,
+                            );
+                        }),
+                )
                 .when(has_github, |row| {
                     row.child(
                         Button::new("btn-gh-web")
@@ -498,7 +589,7 @@ pub fn render_toolbar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                 .child(
                     Button::new("btn-cmd-log")
                         .h(px(36.))
-                        .px_3()
+                        .px_2p5()
                         .icon(IconName::Terminal)
                         .label(format!("{}", app.cmd_log.len()))
                         .tooltip("Toggle git/gh command log (Ctrl+`)")
@@ -530,7 +621,7 @@ fn render_mode_tab(
     div()
         .id(id)
         .h(px(30.))
-        .px_3()
+        .px_2p5()
         .flex()
         .items_center()
         .rounded(px(5.))
@@ -545,7 +636,7 @@ fn render_mode_tab(
                 .child(Icon::new(icon).text_color(if active { fg } else { fg_muted }))
                 .child(
                     div()
-                        .text_sm()
+                        .text_xs()
                         .font_weight(if active {
                             gpui_kit::FontWeight::SEMIBOLD
                         } else {

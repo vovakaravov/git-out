@@ -1,9 +1,9 @@
-use super::{ActiveTab, GitOutApp, Selection, dialogs, graph_canvas};
+use super::{ActiveTab, GitOutApp, Selection, dialogs, graph_canvas, reflog_dialog};
 use crate::gh::{CiState, PullRequest};
-use crate::git::{RefKind, format_relative_time};
+use crate::git::{BisectAction, RefKind, RepoOpState, format_relative_time};
 use crate::theme::{gh_colors, hex_color};
 use gpui_kit::assets::IconName;
-use gpui_kit::component::button::Button;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenuItem};
 use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
@@ -12,6 +12,7 @@ use gpui_kit::{
     StatefulInteractiveElement as _, Styled, div, prelude::FluentBuilder as _, px, uniform_list,
 };
 use std::collections::HashMap;
+use std::rc::Rc;
 
 pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl IntoElement {
     let canvas_bg = hex_color(gh_colors::CANVAS_DEFAULT);
@@ -47,25 +48,26 @@ pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl I
                 div()
                     .text_xs()
                     .text_color(fg_muted)
-                    .child("Open any Git repository to view its commit graph, stage changes, and browse PRs/CI via `gh`."),
+                    .child("Open any Git repository to view its commit graph, stage hunks/lines, resolve conflicts, and browse PRs/CI via `gh`."),
             )
             .into_any_element();
     };
 
-    // Map branch name -> PullRequest for live PR & CI badges right on the commit graph.
     let pr_by_branch: HashMap<String, PullRequest> = app
         .prs
         .iter()
         .map(|pr| (pr.head_ref_name.clone(), pr.clone()))
         .collect();
 
+    let pickaxe_mode = app.pickaxe_commits.is_some();
+    let commits_source = app.pickaxe_commits.as_ref().unwrap_or(&snap.commits);
+
     let query = app.search_input.read(cx).value().trim().to_lowercase();
-    let filtered_indices: Vec<usize> = snap
-        .commits
+    let filtered_indices: Vec<usize> = commits_source
         .iter()
         .enumerate()
         .filter(|(_, c)| {
-            if query.is_empty() {
+            if pickaxe_mode || query.is_empty() {
                 return true;
             }
             c.subject.to_lowercase().contains(&query)
@@ -94,35 +96,42 @@ pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl I
         .and_then(|idx| snap.graph_rows.get(idx))
         .map(|r| r.commit_col)
         .unwrap_or(0);
-    let head_filtered_pos = filtered_indices
-        .iter()
-        .position(|&idx| snap.commits[idx].is_head);
+    let head_filtered_pos = if pickaxe_mode {
+        None
+    } else {
+        filtered_indices
+            .iter()
+            .position(|&idx| snap.commits[idx].is_head)
+    };
 
     let wip_selected = matches!(app.selection, Selection::Wip);
     let dirty = snap.is_dirty();
     let staged_n = snap.staged_files.len();
     let unstaged_n = snap.unstaged_files.len();
     let has_stashes = !snap.stashes.is_empty();
+    let has_conflicts = snap.has_conflicts();
 
     let selected_hash = match &app.selection {
         Selection::Commit(h) => Some(h.clone()),
-        Selection::Wip => None,
+        _ => None,
     };
 
     let item_count = filtered_indices.len();
     let list_scroll = app.graph_scroll.clone();
     let app_entity = cx.entity();
+    let op_state = snap.op_state.clone();
+    let compare_base = app.compare_base.clone();
 
     v_flex()
         .size_full()
         .bg(canvas_bg)
-        // Top search + jump strip
+        // Top search + pickaxe + branch scope strip
         .child(
             h_flex()
                 .w_full()
                 .px_3()
                 .py_1p5()
-                .gap_2()
+                .gap_1p5()
                 .bg(subtle_bg)
                 .border_b_1()
                 .border_color(border)
@@ -136,6 +145,32 @@ pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl I
                             .prefix(Icon::new(IconName::Search).xsmall().text_color(fg_muted)),
                     ),
                 )
+                .child({
+                    let q_term = app.search_input.read(cx).value().trim().to_string();
+                    Button::new("btn-pickaxe")
+                        .xsmall()
+                        .icon(IconName::FileSearch)
+                        .label("Code (-S)")
+                        .tooltip("Search commit history for added/removed string (git log -S)")
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.run_pickaxe_search(q_term.clone(), cx);
+                        }))
+                })
+                .child(
+                    Button::new("toggle-branch-scope")
+                        .xsmall()
+                        .outline()
+                        .icon(IconName::GitBranch)
+                        .label(if app.current_branch_only {
+                            "HEAD Only"
+                        } else {
+                            "All Branches"
+                        })
+                        .tooltip("Toggle showing all branches vs current branch history")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.toggle_current_branch_only(cx);
+                        })),
+                )
                 .child(
                     div()
                         .text_xs()
@@ -143,6 +178,17 @@ pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl I
                         .flex_shrink_0()
                         .child(format!("{item_count} commits")),
                 )
+                .when(snap.has_more_commits && !pickaxe_mode, |row| {
+                    row.child(
+                        Button::new("btn-load-more")
+                            .xsmall()
+                            .label("+500")
+                            .tooltip("Load 500 more commits")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.load_more_commits(cx);
+                            })),
+                    )
+                })
                 .when_some(head_filtered_pos, |row, pos| {
                     let handle = list_scroll.clone();
                     row.child(
@@ -157,6 +203,202 @@ pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl I
                     )
                 }),
         )
+        // In-progress Git Operation Banner (Merge / Rebase / Cherry-pick / Revert / Bisect)
+        .when(op_state != RepoOpState::None, |col| {
+            let label = match &op_state {
+                RepoOpState::Merging => "MERGE IN PROGRESS".to_string(),
+                RepoOpState::Rebasing {
+                    step: Some(s),
+                    total: Some(t),
+                } => format!("REBASE IN PROGRESS (step {s}/{t})"),
+                RepoOpState::Rebasing { .. } => "REBASE IN PROGRESS".to_string(),
+                RepoOpState::CherryPicking => "CHERRY-PICK IN PROGRESS".to_string(),
+                RepoOpState::Reverting => "REVERT IN PROGRESS".to_string(),
+                RepoOpState::Bisecting => "GIT BISECT IN PROGRESS".to_string(),
+                RepoOpState::None => String::new(),
+            };
+            let is_bisect = op_state == RepoOpState::Bisecting;
+            let can_skip = matches!(
+                op_state,
+                RepoOpState::Rebasing { .. } | RepoOpState::CherryPicking | RepoOpState::Reverting
+            );
+            let banner_color = if is_bisect { purple } else { orange };
+
+            col.child(
+                h_flex()
+                    .w_full()
+                    .px_3()
+                    .py_1p5()
+                    .gap_2()
+                    .bg(banner_color.opacity(0.14))
+                    .border_b_1()
+                    .border_color(banner_color.opacity(0.4))
+                    .justify_between()
+                    .items_center()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                Icon::new(IconName::TriangleAlert)
+                                    .small()
+                                    .text_color(banner_color),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(gpui_kit::FontWeight::BOLD)
+                                    .text_color(banner_color)
+                                    .child(label),
+                            )
+                            .when(has_conflicts, |r| {
+                                r.child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(red)
+                                        .child("Resolve conflicted files in WIP inspector"),
+                                )
+                            }),
+                    )
+                    .child(if is_bisect {
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Button::new("bisect-good")
+                                    .xsmall()
+                                    .primary()
+                                    .label("Good")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.bisect_mark(BisectAction::Good, cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new("bisect-bad")
+                                    .xsmall()
+                                    .danger()
+                                    .label("Bad")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.bisect_mark(BisectAction::Bad, cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new("bisect-skip")
+                                    .xsmall()
+                                    .label("Skip")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.bisect_mark(BisectAction::Skip, cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new("bisect-reset")
+                                    .xsmall()
+                                    .label("End Bisect")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.bisect_mark(BisectAction::Reset, cx);
+                                    })),
+                            )
+                    } else {
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Button::new("op-continue")
+                                    .xsmall()
+                                    .primary()
+                                    .icon(IconName::Play)
+                                    .label("Continue")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.continue_op(cx);
+                                    })),
+                            )
+                            .when(can_skip, |r| {
+                                r.child(
+                                    Button::new("op-skip")
+                                        .xsmall()
+                                        .label("Skip")
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.skip_op(cx);
+                                        })),
+                                )
+                            })
+                            .child(
+                                Button::new("op-abort")
+                                    .xsmall()
+                                    .danger()
+                                    .icon(IconName::Ban)
+                                    .label("Abort")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.abort_op(cx);
+                                    })),
+                            )
+                    }),
+            )
+        })
+        // Compare Base Banner
+        .when_some(compare_base.clone(), |col, (_, label)| {
+            col.child(
+                h_flex()
+                    .w_full()
+                    .px_3()
+                    .py_1()
+                    .bg(blue.opacity(0.12))
+                    .border_b_1()
+                    .border_color(blue.opacity(0.35))
+                    .justify_between()
+                    .items_center()
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .items_center()
+                            .child(Icon::new(IconName::GitCompare).xsmall().text_color(blue))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(fg)
+                                    .child(format!("Compare base: `{label}` — right-click any commit to compare")),
+                            ),
+                    )
+                    .child(
+                        Button::new("clear-compare-base")
+                            .xsmall()
+                            .ghost()
+                            .icon(IconName::X)
+                            .label("Clear")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.clear_compare_base(cx);
+                            })),
+                    ),
+            )
+        })
+        // Pickaxe Active Banner
+        .when_some(app.pickaxe_query.clone(), |col, term| {
+            col.child(
+                h_flex()
+                    .w_full()
+                    .px_3()
+                    .py_1()
+                    .bg(purple.opacity(0.12))
+                    .border_b_1()
+                    .border_color(purple.opacity(0.35))
+                    .justify_between()
+                    .items_center()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(fg)
+                            .child(format!("Code Search (`git log -S \"{term}\"`): {item_count} matches")),
+                    )
+                    .child(
+                        Button::new("clear-pickaxe")
+                            .xsmall()
+                            .ghost()
+                            .icon(IconName::X)
+                            .label("Exit Code Search")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.clear_pickaxe_search(cx);
+                            })),
+                    ),
+            )
+        })
         // Pinned WIP / Working Tree row
         .child(
             h_flex()
@@ -169,6 +411,8 @@ pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl I
                 .cursor_pointer()
                 .bg(if wip_selected {
                     blue.opacity(0.14)
+                } else if has_conflicts {
+                    red.opacity(0.10)
                 } else if dirty {
                     orange.opacity(0.06)
                 } else {
@@ -192,14 +436,22 @@ pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl I
                                 .px_1p5()
                                 .py(px(1.))
                                 .rounded(px(4.))
-                                .bg(if dirty {
+                                .bg(if has_conflicts {
+                                    red.opacity(0.22)
+                                } else if dirty {
                                     orange.opacity(0.20)
                                 } else {
                                     border
                                 })
                                 .text_xs()
                                 .font_weight(gpui_kit::FontWeight::BOLD)
-                                .text_color(if dirty { orange } else { fg_muted })
+                                .text_color(if has_conflicts {
+                                    red
+                                } else if dirty {
+                                    orange
+                                } else {
+                                    fg_muted
+                                })
                                 .child("WIP"),
                         )
                         .child(
@@ -207,7 +459,9 @@ pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl I
                                 .text_xs()
                                 .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                                 .text_color(fg)
-                                .child(if dirty {
+                                .child(if has_conflicts {
+                                    "Merge Conflicts Detected"
+                                } else if dirty {
                                     "Working Tree Changes"
                                 } else {
                                     "Working Tree Clean"
@@ -223,7 +477,7 @@ pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl I
                             .child(
                                 div()
                                     .text_xs()
-                                    .text_color(orange)
+                                    .text_color(if has_conflicts { red } else { orange })
                                     .child(format!("{unstaged_n} unstaged")),
                             )
                         }),
@@ -239,8 +493,10 @@ pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl I
                     move |menu, _, _| {
                         let app_stage = app_wip.clone();
                         let app_unstage = app_wip.clone();
+                        let app_discard = app_wip.clone();
                         let app_stash = app_wip.clone();
                         let app_pop = app_wip.clone();
+                        let app_patch = app_wip.clone();
                         menu.label("Working Tree")
                             .item(
                                 PopupMenuItem::new("Stage all changes")
@@ -258,6 +514,24 @@ pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl I
                                         app_unstage.update(cx, |app, cx| app.unstage_all(cx));
                                     }),
                             )
+                            .item(
+                                PopupMenuItem::new("Discard all changes…")
+                                    .icon(IconName::Trash)
+                                    .disabled(unstaged_n == 0 && staged_n == 0)
+                                    .on_click(move |_, window, cx| {
+                                        let app = app_discard.clone();
+                                        dialogs::open_confirm_danger(
+                                            "Discard All Working Changes".into(),
+                                            "Permanently discard all staged, unstaged, and untracked changes in the working tree? This cannot be undone.".into(),
+                                            "Discard All".into(),
+                                            window,
+                                            cx,
+                                            Rc::new(move |_, cx| {
+                                                app.update(cx, |app, cx| app.discard_all_changes(cx));
+                                            }),
+                                        );
+                                    }),
+                            )
                             .separator()
                             .item(
                                 PopupMenuItem::new("Stash changes…")
@@ -273,6 +547,17 @@ pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl I
                                     .disabled(!has_stashes)
                                     .on_click(move |_, _, cx| {
                                         app_pop.update(cx, |app, cx| app.stash_pop(None, cx));
+                                    }),
+                            )
+                            .item(
+                                PopupMenuItem::new("Apply patch file…")
+                                    .icon(IconName::FileDiff)
+                                    .on_click(move |_, window, cx| {
+                                        reflog_dialog::open_apply_patch_dialog(
+                                            app_patch.clone(),
+                                            window,
+                                            cx,
+                                        );
                                     }),
                             )
                     }
@@ -294,12 +579,18 @@ pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl I
                     )
                 })
                 .when(item_count > 0, |area| {
-                    let commits = snap.commits.clone();
+                    let commits = commits_source.clone();
                     let graph_rows = snap.graph_rows.clone();
-                    let is_filtered = !query.is_empty();
+                    let is_filtered = pickaxe_mode || !query.is_empty();
                     let app_ref = app_entity.clone();
                     let selected_hash = selected_hash.clone();
                     let prs_map = pr_by_branch.clone();
+                    let head_ref_str = snap
+                        .head_branch
+                        .clone()
+                        .or_else(|| snap.head_hash.clone())
+                        .unwrap_or_else(|| "HEAD".to_string());
+                    let is_bisecting = op_state == RepoOpState::Bisecting;
 
                     area.child(
                         uniform_list("commit-graph-list", item_count, move |range, _, _| {
@@ -307,7 +598,6 @@ pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl I
                                 .map(|vis_ix| {
                                     let real_ix = filtered_indices[vis_ix];
                                     let commit = &commits[real_ix];
-                                    let grow = &graph_rows[real_ix];
                                     let is_selected = selected_hash
                                         .as_deref()
                                         .is_some_and(|h| h == commit.hash);
@@ -327,8 +617,9 @@ pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl I
                                     let app_click = app_ref.clone();
                                     let app_menu = app_ref.clone();
                                     let hash_menu = commit.hash.clone();
+                                    let cmp_base_opt = compare_base.clone();
+                                    let head_for_bisect = head_ref_str.clone();
 
-                                    // Find matching PR from local branch names on this commit
                                     let matched_pr = commit.refs.iter().find_map(|r| {
                                         if r.kind == RefKind::LocalBranch {
                                             prs_map.get(&r.name).cloned()
@@ -387,63 +678,105 @@ pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl I
                                             let app_co = app_menu.clone();
                                             let h_br = hash_menu.clone();
                                             let app_new_br = app_menu.clone();
+                                            let h_tag = hash_menu.clone();
+                                            let sh_tag = short_hash.clone();
+                                            let app_tag = app_menu.clone();
                                             let h_cp = hash_menu.clone();
                                             let app_cp = app_menu.clone();
                                             let h_rev = hash_menu.clone();
                                             let app_rev = app_menu.clone();
+                                            let h_rb = hash_menu.clone();
+                                            let sh_rb = short_hash.clone();
+                                            let app_rb = app_menu.clone();
                                             let h_rst = hash_menu.clone();
                                             let sh_rst = short_hash.clone();
                                             let app_rst = app_menu.clone();
                                             let h_copy = hash_menu.clone();
                                             let msg_copy = subject_copy.clone();
+                                            let h_patch = hash_menu.clone();
+                                            let app_patch = app_menu.clone();
+                                            let h_set_cmp = hash_menu.clone();
+                                            let sh_set_cmp = short_hash.clone();
+                                            let app_set_cmp = app_menu.clone();
 
-                                            menu.item(
-                                                PopupMenuItem::new(format!(
-                                                    "Checkout commit ({short_hash})"
-                                                ))
-                                                .icon(IconName::Check)
-                                                .on_click(move |_, _, cx| {
-                                                    let h = h_co.clone();
-                                                    app_co.update(cx, |app, cx| {
-                                                        app.checkout_target(h, cx);
-                                                    });
-                                                }),
-                                            )
-                                            .item(
-                                                PopupMenuItem::new("Create branch here…")
-                                                    .icon(IconName::GitBranchPlus)
-                                                    .on_click(move |_, window, cx| {
-                                                        dialogs::open_create_branch_dialog(
-                                                            app_new_br.clone(),
-                                                            Some(h_br.clone()),
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    }),
-                                            )
-                                            .separator()
-                                            .item(
-                                                PopupMenuItem::new("Cherry-pick commit")
-                                                    .icon(IconName::GitCommitHorizontal)
+                                            menu = menu
+                                                .item(
+                                                    PopupMenuItem::new(format!(
+                                                        "Checkout commit ({short_hash})"
+                                                    ))
+                                                    .icon(IconName::Check)
                                                     .on_click(move |_, _, cx| {
-                                                        let h = h_cp.clone();
-                                                        app_cp.update(cx, |app, cx| {
-                                                            app.cherry_pick(h, cx);
+                                                        let h = h_co.clone();
+                                                        app_co.update(cx, |app, cx| {
+                                                            app.checkout_target(h, cx);
                                                         });
                                                     }),
-                                            )
-                                            .item(
-                                                PopupMenuItem::new("Revert commit")
-                                                    .icon(IconName::RotateCcw)
+                                                )
+                                                .item(
+                                                    PopupMenuItem::new("Create branch here…")
+                                                        .icon(IconName::GitBranchPlus)
+                                                        .on_click(move |_, window, cx| {
+                                                            dialogs::open_create_branch_dialog(
+                                                                app_new_br.clone(),
+                                                                Some(h_br.clone()),
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        }),
+                                                )
+                                                .item(
+                                                    PopupMenuItem::new("Create tag here…")
+                                                        .icon(IconName::Tag)
+                                                        .on_click(move |_, window, cx| {
+                                                            reflog_dialog::open_create_tag_dialog(
+                                                                app_tag.clone(),
+                                                                h_tag.clone(),
+                                                                sh_tag.clone(),
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        }),
+                                                )
+                                                .separator()
+                                                .item(
+                                                    PopupMenuItem::new("Cherry-pick commit")
+                                                        .icon(IconName::GitCommitHorizontal)
+                                                        .on_click(move |_, _, cx| {
+                                                            let h = h_cp.clone();
+                                                            app_cp.update(cx, |app, cx| {
+                                                                app.cherry_pick(h, cx);
+                                                            });
+                                                        }),
+                                                )
+                                                .item(
+                                                    PopupMenuItem::new("Revert commit")
+                                                        .icon(IconName::RotateCcw)
+                                                        .on_click(move |_, _, cx| {
+                                                            let h = h_rev.clone();
+                                                            app_rev.update(cx, |app, cx| {
+                                                                app.revert_commit(h, cx);
+                                                            });
+                                                        }),
+                                                )
+                                                .item(
+                                                    PopupMenuItem::new(
+                                                        "Interactive Rebase from here…",
+                                                    )
+                                                    .icon(IconName::GitBranch)
                                                     .on_click(move |_, _, cx| {
-                                                        let h = h_rev.clone();
-                                                        app_rev.update(cx, |app, cx| {
-                                                            app.revert_commit(h, cx);
+                                                        let h = h_rb.clone();
+                                                        let sh = sh_rb.clone();
+                                                        app_rb.update(cx, |app, cx| {
+                                                            app.open_interactive_rebase_from(
+                                                                h, sh, cx,
+                                                            );
                                                         });
                                                     }),
-                                            )
-                                            .item(
-                                                PopupMenuItem::new("Reset current branch to here…")
+                                                )
+                                                .item(
+                                                    PopupMenuItem::new(
+                                                        "Reset current branch to here…",
+                                                    )
                                                     .icon(IconName::Trash)
                                                     .on_click(move |_, window, cx| {
                                                         dialogs::open_reset_dialog(
@@ -454,48 +787,110 @@ pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl I
                                                             cx,
                                                         );
                                                     }),
-                                            )
-                                            .separator()
-                                            .item(
-                                                PopupMenuItem::new("Copy commit SHA")
-                                                    .icon(IconName::Copy)
-                                                    .on_click(move |_, window, cx| {
-                                                        cx.write_to_clipboard(
-                                                            ClipboardItem::new_string(
-                                                                h_copy.clone(),
-                                                            ),
-                                                        );
-                                                        super::notify_info(
-                                                            window,
-                                                            cx,
-                                                            "Copied commit SHA",
-                                                        );
+                                                )
+                                                .separator()
+                                                .item(
+                                                    PopupMenuItem::new("Set as Compare Base")
+                                                        .icon(IconName::GitCompare)
+                                                        .on_click(move |_, _, cx| {
+                                                            let h = h_set_cmp.clone();
+                                                            let sh = sh_set_cmp.clone();
+                                                            app_set_cmp.update(cx, |app, cx| {
+                                                                app.set_compare_base(h, sh, cx);
+                                                            });
+                                                        }),
+                                                );
+
+                                            if let Some((base_h, base_lbl)) = cmp_base_opt.clone() {
+                                                let head_cmp = hash_menu.clone();
+                                                let app_cmp = app_menu.clone();
+                                                menu = menu.item(
+                                                    PopupMenuItem::new(format!(
+                                                        "Compare with `{base_lbl}`"
+                                                    ))
+                                                    .icon(IconName::GitCompareArrows)
+                                                    .on_click(move |_, _, cx| {
+                                                        let b = base_h.clone();
+                                                        let hd = head_cmp.clone();
+                                                        app_cmp.update(cx, |app, cx| {
+                                                            app.compare_commits(b, hd, cx);
+                                                        });
                                                     }),
-                                            )
-                                            .item(
-                                                PopupMenuItem::new("Copy commit message")
-                                                    .icon(IconName::Copy)
-                                                    .on_click(move |_, window, cx| {
-                                                        cx.write_to_clipboard(
-                                                            ClipboardItem::new_string(
-                                                                msg_copy.clone(),
-                                                            ),
-                                                        );
-                                                        super::notify_info(
-                                                            window,
-                                                            cx,
-                                                            "Copied commit message",
-                                                        );
+                                                );
+                                            }
+
+                                            if !is_bisecting {
+                                                let h_good = hash_menu.clone();
+                                                let h_bad = head_for_bisect.clone();
+                                                let app_bs = app_menu.clone();
+                                                menu = menu.item(
+                                                    PopupMenuItem::new(
+                                                        "Bisect: Start (this Good, HEAD Bad)",
+                                                    )
+                                                    .icon(IconName::Search)
+                                                    .on_click(move |_, _, cx| {
+                                                        let g = h_good.clone();
+                                                        let b = h_bad.clone();
+                                                        app_bs.update(cx, |app, cx| {
+                                                            app.bisect_start(b, g, cx);
+                                                        });
                                                     }),
-                                            )
+                                                );
+                                            }
+
+                                            menu.separator()
+                                                .item(
+                                                    PopupMenuItem::new("Copy commit SHA")
+                                                        .icon(IconName::Copy)
+                                                        .on_click(move |_, window, cx| {
+                                                            cx.write_to_clipboard(
+                                                                ClipboardItem::new_string(
+                                                                    h_copy.clone(),
+                                                                ),
+                                                            );
+                                                            super::notify_info(
+                                                                window,
+                                                                cx,
+                                                                "Copied commit SHA",
+                                                            );
+                                                        }),
+                                                )
+                                                .item(
+                                                    PopupMenuItem::new("Copy commit message")
+                                                        .icon(IconName::Copy)
+                                                        .on_click(move |_, window, cx| {
+                                                            cx.write_to_clipboard(
+                                                                ClipboardItem::new_string(
+                                                                    msg_copy.clone(),
+                                                                ),
+                                                            );
+                                                            super::notify_info(
+                                                                window,
+                                                                cx,
+                                                                "Copied commit message",
+                                                            );
+                                                        }),
+                                                )
+                                                .item(
+                                                    PopupMenuItem::new("Copy commit .patch")
+                                                        .icon(IconName::FileDiff)
+                                                        .on_click(move |_, _, cx| {
+                                                            let h = h_patch.clone();
+                                                            app_patch.update(cx, |app, cx| {
+                                                                app.copy_commit_patch(h, cx);
+                                                            });
+                                                        }),
+                                                )
                                         })
-                                        .when(!is_filtered, |row| {
+                                        .when(!is_filtered && real_ix < graph_rows.len(), |row| {
                                             row.child(graph_canvas::render_graph_cell(
-                                                grow.clone(),
+                                                graph_rows[real_ix].clone(),
                                                 graph_w,
                                             ))
                                         })
-                                        .when(is_filtered, |row| row.pl_3())
+                                        .when(is_filtered || real_ix >= graph_rows.len(), |row| {
+                                            row.pl_3()
+                                        })
                                         // Refs + PR badge + subject
                                         .child(
                                             h_flex()
@@ -585,6 +980,13 @@ pub fn render_graph_view(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl I
                                                                     .text_color(fg)
                                                                     .child(format!("PR #{pr_num}")),
                                                             ),
+                                                    )
+                                                })
+                                                .when(commit.signature_status == 'G', |row| {
+                                                    row.child(
+                                                        Icon::new(IconName::BadgeCheck)
+                                                            .xsmall()
+                                                            .text_color(green),
                                                     )
                                                 })
                                                 .child(

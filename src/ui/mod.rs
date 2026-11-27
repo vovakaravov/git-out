@@ -1,11 +1,15 @@
 pub mod cmd_drawer;
+pub mod command_palette;
 pub mod dialogs;
 pub mod gh_actions;
 pub mod gh_issues;
 pub mod gh_prs;
 pub mod graph_canvas;
 pub mod graph_view;
+pub mod history_dialog;
 pub mod inspector;
+pub mod rebase_dialog;
+pub mod reflog_dialog;
 pub mod sidebar;
 pub mod toolbar;
 
@@ -15,20 +19,25 @@ use crate::gh::{
     self, GhLabel, Issue, IssueDetail, MergeStrategy, PrDetail, PullRequest, ReviewAction,
     RunDetail, WorkflowRun,
 };
-use crate::git::{self, CommitDetail, FileChange, RepoSnapshot, ResetMode};
+use crate::git::patch::{ParsedFilePatch, parse_unified_patch};
+use crate::git::{
+    self, BisectAction, ChangeKind, Commit, CommitDetail, CompareDetail, FileChange,
+    RebaseTodoItem, RepoSnapshot, ResetMode, StashDetail,
+};
 use crate::theme::{contrast_fg_for_hex, gh_colors, hex_color, parse_gh_label_hex};
 use crate::watcher::RepoWatcher;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::Button;
-use gpui_kit::component::diff::{DiffFile, DiffMode, DiffParseOptions, DiffState};
+use gpui_kit::component::diff::{DiffEvent, DiffFile, DiffMode, DiffParseOptions, DiffState};
 use gpui_kit::component::input::{InputState, TextareaState};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::resizable::{h_resizable, resizable_panel};
 use gpui_kit::component::{Icon, Sizable as _, WindowExt as _, v_flex};
 use gpui_kit::{
-    AnyWindowHandle, App, AppContext as _, Context, Entity, FocusHandle, Focusable,
+    AnyWindowHandle, App, AppContext as _, ClipboardItem, Context, Entity, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, KeyBinding, ParentElement, Render, ScrollStrategy,
-    Styled, UniformListScrollHandle, Window, actions, div, prelude::FluentBuilder as _, px,
+    Styled, Subscription, UniformListScrollHandle, Window, actions, div, prelude::FluentBuilder as _,
+    px,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -47,7 +56,10 @@ actions!(
         SwitchTab2,
         SwitchTab3,
         SwitchTab4,
-        ToggleCmdLog
+        ToggleCmdLog,
+        OpenCommandPalette,
+        OpenReflog,
+        OpenFileFinder
     ]
 );
 
@@ -64,6 +76,10 @@ pub fn register_keybindings(cx: &mut App) {
         KeyBinding::new("ctrl-3", SwitchTab3, None),
         KeyBinding::new("ctrl-4", SwitchTab4, None),
         KeyBinding::new("ctrl-`", ToggleCmdLog, None),
+        KeyBinding::new("ctrl-k", OpenCommandPalette, None),
+        KeyBinding::new("ctrl-shift-p", OpenCommandPalette, None),
+        KeyBinding::new("ctrl-shift-r", OpenReflog, None),
+        KeyBinding::new("ctrl-shift-f", OpenFileFinder, None),
     ]);
 }
 
@@ -86,16 +102,21 @@ pub enum RemoteGitOp {
 pub enum Selection {
     Wip,
     Commit(String),
+    Stash(String),
+    Compare { base: String, head: String },
 }
 
 const MAX_CMD_LOG: usize = 200;
-const LOG_COMMIT_LIMIT: usize = 500;
+const DEFAULT_COMMIT_LIMIT: usize = 500;
 
 #[derive(Clone)]
 pub struct CachedRepoState {
     pub snapshot: Option<RepoSnapshot>,
     pub active_tab: ActiveTab,
     pub selection: Selection,
+    pub commit_limit: usize,
+    pub current_branch_only: bool,
+    pub compare_base: Option<(String, String)>,
     pub gh_error: Option<String>,
     pub prs: Vec<PullRequest>,
     pub selected_pr_number: Option<u64>,
@@ -124,17 +145,31 @@ pub struct GitOutApp {
     pub active_tab: ActiveTab,
     pub selection: Selection,
     pub selected_worktree_file: Option<FileChange>,
+    pub selected_conflict_path: Option<String>,
     pub selected_commit_file: Option<String>,
     pub commit_detail: Option<CommitDetail>,
+    pub stash_detail: Option<StashDetail>,
+    pub compare_detail: Option<CompareDetail>,
+    pub compare_base: Option<(String, String)>,
 
     pub diff_mode: DiffMode,
+    pub ignore_whitespace: bool,
+    pub soft_wrap_diff: bool,
     pub inspector_diff_state: Entity<DiffState>,
     pub inspector_raw_patch: String,
+    pub parsed_wip_patch: Vec<ParsedFilePatch>,
+    _diff_sub: Subscription,
+
+    pub commit_limit: usize,
+    pub current_branch_only: bool,
+    pub pickaxe_query: Option<String>,
+    pub pickaxe_commits: Option<Vec<Commit>>,
 
     pub search_input: Entity<InputState>,
     pub commit_summary_input: Entity<InputState>,
     pub commit_body_input: Entity<TextareaState>,
     pub amend_commit: bool,
+    pub sign_commit: bool,
 
     pub graph_scroll: UniformListScrollHandle,
 
@@ -143,6 +178,9 @@ pub struct GitOutApp {
     pub sec_remotes_open: bool,
     pub sec_tags_open: bool,
     pub sec_stashes_open: bool,
+    pub sec_worktrees_open: bool,
+    pub sec_submodules_open: bool,
+    pub sec_remote_configs_open: bool,
     pub sec_prs_open: bool,
 
     // GitHub (`gh`) state
@@ -155,6 +193,7 @@ pub struct GitOutApp {
     pub pr_diff_state: Entity<DiffState>,
     pub pr_comment_input: Entity<TextareaState>,
 
+    // Busy & command log
     pub runs: Vec<WorkflowRun>,
     pub selected_run_id: Option<u64>,
     pub selected_run_detail: Option<RunDetail>,
@@ -164,7 +203,6 @@ pub struct GitOutApp {
     pub selected_issue_number: Option<u64>,
     pub selected_issue_detail: Option<IssueDetail>,
 
-    // Busy & command log
     pub busy_git: bool,
     pub active_remote_op: Option<RemoteGitOp>,
     #[allow(dead_code)]
@@ -207,6 +245,16 @@ impl GitOutApp {
             .detach();
 
         let inspector_diff_state = cx.new(|cx| DiffState::new([], cx).with_mode(DiffMode::Unified));
+        let _diff_sub = cx.subscribe(&inspector_diff_state, |_, _, event: &DiffEvent, cx| {
+            match event {
+                DiffEvent::SelectionChanged(_)
+                | DiffEvent::SelectionEnded(_)
+                | DiffEvent::ConflictResolved(_, _) => {
+                    cx.notify();
+                }
+                _ => {}
+            }
+        });
         let pr_diff_state = cx.new(|cx| DiffState::new([], cx).with_mode(DiffMode::Unified));
 
         let restored_repos: Vec<PathBuf> = config
@@ -235,20 +283,36 @@ impl GitOutApp {
             active_tab: ActiveTab::Graph,
             selection: Selection::Wip,
             selected_worktree_file: None,
+            selected_conflict_path: None,
             selected_commit_file: None,
             commit_detail: None,
+            stash_detail: None,
+            compare_detail: None,
+            compare_base: None,
             diff_mode: DiffMode::Unified,
+            ignore_whitespace: false,
+            soft_wrap_diff: false,
             inspector_diff_state,
             inspector_raw_patch: String::new(),
+            parsed_wip_patch: Vec::new(),
+            _diff_sub,
+            commit_limit: DEFAULT_COMMIT_LIMIT,
+            current_branch_only: false,
+            pickaxe_query: None,
+            pickaxe_commits: None,
             search_input,
             commit_summary_input,
             commit_body_input,
             amend_commit: false,
+            sign_commit: false,
             graph_scroll: UniformListScrollHandle::new(),
             sec_local_open: true,
             sec_remotes_open: true,
             sec_tags_open: false,
             sec_stashes_open: true,
+            sec_worktrees_open: false,
+            sec_submodules_open: false,
+            sec_remote_configs_open: false,
             sec_prs_open: true,
             gh_error: None,
             prs: Vec::new(),
@@ -272,7 +336,6 @@ impl GitOutApp {
             cmd_log: Vec::new(),
         };
 
-        // Resolve initial repository (CLI arg -> cwd -> config.last_repo -> first restored tab).
         let candidate = initial_repo
             .or_else(|| {
                 std::env::current_dir()
@@ -286,7 +349,6 @@ impl GitOutApp {
             app.open_repository(path, cx);
         }
 
-        // Start lightweight .git watcher poller so external terminal / agent actions auto-refresh.
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor()
@@ -339,6 +401,13 @@ impl GitOutApp {
         });
     }
 
+    pub fn toast_info(&self, msg: impl Into<String>, cx: &mut App) {
+        let text = msg.into();
+        let _ = self.window_handle.update(cx, |_, window, cx| {
+            window.push_notification(Notification::info(text), cx);
+        });
+    }
+
     fn stash_active_repo_cache(&mut self) {
         let Some(root) = self.repo_root.clone() else {
             return;
@@ -349,6 +418,9 @@ impl GitOutApp {
                 snapshot: self.snapshot.clone(),
                 active_tab: self.active_tab,
                 selection: self.selection.clone(),
+                commit_limit: self.commit_limit,
+                current_branch_only: self.current_branch_only,
+                compare_base: self.compare_base.clone(),
                 gh_error: self.gh_error.clone(),
                 prs: self.prs.clone(),
                 selected_pr_number: self.selected_pr_number,
@@ -371,9 +443,18 @@ impl GitOutApp {
         self.active_tab = ActiveTab::Graph;
         self.selection = Selection::Wip;
         self.selected_worktree_file = None;
+        self.selected_conflict_path = None;
         self.selected_commit_file = None;
         self.commit_detail = None;
+        self.stash_detail = None;
+        self.compare_detail = None;
+        self.compare_base = None;
+        self.pickaxe_query = None;
+        self.pickaxe_commits = None;
+        self.commit_limit = DEFAULT_COMMIT_LIMIT;
+        self.current_branch_only = false;
         self.inspector_raw_patch.clear();
+        self.parsed_wip_patch.clear();
         self.inspector_diff_state
             .update(cx, |s, cx| s.set_files([], cx));
         self.gh_error = None;
@@ -403,9 +484,15 @@ impl GitOutApp {
         self.active_remote_op = None;
         self.busy_gh = false;
         self.selected_worktree_file = None;
+        self.selected_conflict_path = None;
         self.selected_commit_file = None;
         self.commit_detail = None;
+        self.stash_detail = None;
+        self.compare_detail = None;
+        self.pickaxe_query = None;
+        self.pickaxe_commits = None;
         self.inspector_raw_patch.clear();
+        self.parsed_wip_patch.clear();
         self.inspector_diff_state
             .update(cx, |s, cx| s.set_files([], cx));
 
@@ -416,6 +503,9 @@ impl GitOutApp {
             self.snapshot = cached.snapshot;
             self.active_tab = cached.active_tab;
             self.selection = cached.selection;
+            self.commit_limit = cached.commit_limit;
+            self.current_branch_only = cached.current_branch_only;
+            self.compare_base = cached.compare_base;
             self.gh_error = cached.gh_error;
             self.prs = cached.prs;
             self.selected_pr_number = cached.selected_pr_number;
@@ -437,6 +527,9 @@ impl GitOutApp {
             self.snapshot = None;
             self.active_tab = ActiveTab::Graph;
             self.selection = Selection::Wip;
+            self.commit_limit = DEFAULT_COMMIT_LIMIT;
+            self.current_branch_only = false;
+            self.compare_base = None;
             self.gh_error = None;
             self.prs.clear();
             self.runs.clear();
@@ -550,12 +643,14 @@ impl GitOutApp {
             return;
         };
         let repo_gen = self.repo_generation;
+        let limit = self.commit_limit;
+        let branch_only = self.current_branch_only;
         self.busy_git = true;
 
         cx.spawn(async move |this, cx| {
             let (snap_res, entries) = cx
                 .background_executor()
-                .spawn(async move { git::load_snapshot(&root, LOG_COMMIT_LIMIT) })
+                .spawn(async move { git::load_snapshot(&root, limit, branch_only) })
                 .await;
 
             let _ = this.update(cx, |app, cx| {
@@ -571,13 +666,32 @@ impl GitOutApp {
                         let first_hash = snap.commits.first().map(|c| c.hash.clone());
                         app.snapshot = Some(snap);
 
-                        // Refresh active selection details
                         match app.selection.clone() {
                             Selection::Wip => {
-                                if !dirty && matches!(app.selected_worktree_file, Some(_)) {
+                                if !dirty {
                                     app.selected_worktree_file = None;
+                                    app.selected_conflict_path = None;
+                                } else if let Some(sel) = app.selected_worktree_file.clone() {
+                                    let snap_ref = app.snapshot.as_ref().unwrap();
+                                    let refreshed_match = if sel.staged {
+                                        snap_ref
+                                            .staged_files
+                                            .iter()
+                                            .find(|f| f.path == sel.path)
+                                            .cloned()
+                                    } else {
+                                        snap_ref
+                                            .unstaged_files
+                                            .iter()
+                                            .find(|f| f.path == sel.path)
+                                            .cloned()
+                                    };
+                                    app.selected_worktree_file = refreshed_match;
+                                    if app.selected_worktree_file.is_none() {
+                                        app.selected_conflict_path = None;
+                                    }
                                 }
-                                app.load_worktree_diff(cx);
+                                app.reload_active_wip_view(cx);
                             }
                             Selection::Commit(h) => {
                                 let exists = app
@@ -590,6 +704,21 @@ impl GitOutApp {
                                     app.selection = Selection::Commit(fh.clone());
                                     app.load_commit_detail(fh, cx);
                                 }
+                            }
+                            Selection::Stash(r) => {
+                                let msg = app
+                                    .snapshot
+                                    .as_ref()
+                                    .and_then(|s| s.stashes.iter().find(|st| st.reference == r))
+                                    .map(|st| st.message.clone());
+                                if let Some(m) = msg {
+                                    app.load_stash_detail_bg(r, m, cx);
+                                } else {
+                                    app.select_wip(cx);
+                                }
+                            }
+                            Selection::Compare { base, head } => {
+                                app.load_compare_detail_bg(base, head, cx);
                             }
                         }
 
@@ -605,6 +734,38 @@ impl GitOutApp {
             });
         })
         .detach();
+    }
+
+    pub fn load_more_commits(&mut self, cx: &mut Context<Self>) {
+        self.commit_limit = self.commit_limit.saturating_add(500);
+        self.refresh_snapshot_only(cx);
+    }
+
+    pub fn toggle_current_branch_only(&mut self, cx: &mut Context<Self>) {
+        self.current_branch_only = !self.current_branch_only;
+        self.refresh_snapshot_only(cx);
+    }
+
+    pub fn toggle_ignore_whitespace(&mut self, cx: &mut Context<Self>) {
+        self.ignore_whitespace = !self.ignore_whitespace;
+        match self.selection.clone() {
+            Selection::Wip => self.reload_active_wip_view(cx),
+            Selection::Commit(h) => {
+                if let Some(p) = self.selected_commit_file.clone() {
+                    self.select_commit_file(Some(p), cx);
+                } else {
+                    self.load_commit_detail(h, cx);
+                }
+            }
+            Selection::Compare { base, head } => self.load_compare_detail_bg(base, head, cx),
+            Selection::Stash(_) => {}
+        }
+        cx.notify();
+    }
+
+    pub fn toggle_soft_wrap(&mut self, cx: &mut Context<Self>) {
+        self.soft_wrap_diff = !self.soft_wrap_diff;
+        cx.notify();
     }
 
     pub fn switch_tab(&mut self, tab: ActiveTab, cx: &mut Context<Self>) {
@@ -632,25 +793,55 @@ impl GitOutApp {
             self.active_tab = ActiveTab::Graph;
             self.graph_scroll.scroll_to_item(pos, ScrollStrategy::Center);
             self.select_commit(hash.to_string(), cx);
+        } else {
+            // Even if beyond loaded limit or filtered, allow inspecting commit directly
+            self.active_tab = ActiveTab::Graph;
+            self.select_commit(hash.to_string(), cx);
         }
     }
 
     pub fn select_wip(&mut self, cx: &mut Context<Self>) {
         self.selection = Selection::Wip;
         self.selected_worktree_file = None;
+        self.selected_conflict_path = None;
         self.load_worktree_diff(cx);
         cx.notify();
     }
 
     pub fn select_worktree_file(&mut self, file: Option<FileChange>, cx: &mut Context<Self>) {
+        self.selection = Selection::Wip;
         self.selected_worktree_file = file;
-        self.load_worktree_diff(cx);
+        self.reload_active_wip_view(cx);
         cx.notify();
+    }
+
+    fn reload_active_wip_view(&mut self, cx: &mut Context<Self>) {
+        if let (Some(root), Some(file)) = (
+            self.repo_root.as_ref(),
+            self.selected_worktree_file.as_ref(),
+        ) && file.kind == ChangeKind::Conflicted
+        {
+            let full_path = root.join(&file.path);
+            if let Ok(text) = fs::read_to_string(&full_path)
+                && let Ok(diff_file) = DiffFile::parse_conflicts(file.path.clone(), &text)
+                && !diff_file.conflicts().is_empty()
+            {
+                self.selected_conflict_path = Some(file.path.clone());
+                self.inspector_raw_patch.clear();
+                self.parsed_wip_patch.clear();
+                self.inspector_diff_state
+                    .update(cx, |s, cx| s.set_files([diff_file], cx));
+                return;
+            }
+        }
+        self.selected_conflict_path = None;
+        self.load_worktree_diff(cx);
     }
 
     pub fn select_commit(&mut self, hash: String, cx: &mut Context<Self>) {
         self.selection = Selection::Commit(hash.clone());
         self.selected_commit_file = None;
+        self.selected_conflict_path = None;
         self.load_commit_detail(hash, cx);
         cx.notify();
     }
@@ -666,10 +857,13 @@ impl GitOutApp {
 
         if let Some(file_path) = path {
             let repo_gen = self.repo_generation;
+            let ignore_ws = self.ignore_whitespace;
             cx.spawn(async move |this, cx| {
                 let (res, entry) = cx
                     .background_executor()
-                    .spawn(async move { git::load_commit_file_patch(&root, &hash, &file_path) })
+                    .spawn(async move {
+                        git::load_commit_file_patch(&root, &hash, &file_path, ignore_ws)
+                    })
                     .await;
                 let _ = this.update(cx, |app, cx| {
                     app.push_cmd(entry);
@@ -677,7 +871,7 @@ impl GitOutApp {
                         return;
                     }
                     if let Ok(patch) = res {
-                        app.apply_inspector_patch(patch, cx);
+                        app.apply_inspector_patch(patch, false, cx);
                     }
                     cx.notify();
                 });
@@ -685,7 +879,7 @@ impl GitOutApp {
             .detach();
         } else if let Some(detail) = self.commit_detail.as_ref() {
             let patch = detail.patch.clone();
-            self.apply_inspector_patch(patch, cx);
+            self.apply_inspector_patch(patch, false, cx);
         }
     }
 
@@ -694,10 +888,11 @@ impl GitOutApp {
             return;
         };
         let repo_gen = self.repo_generation;
+        let ignore_ws = self.ignore_whitespace;
         cx.spawn(async move |this, cx| {
             let (res, entries) = cx
                 .background_executor()
-                .spawn(async move { git::load_commit_detail(&root, &hash) })
+                .spawn(async move { git::load_commit_detail(&root, &hash, ignore_ws) })
                 .await;
             let _ = this.update(cx, |app, cx| {
                 app.push_cmds(entries);
@@ -708,7 +903,7 @@ impl GitOutApp {
                     Ok(detail) => {
                         let patch = detail.patch.clone();
                         app.commit_detail = Some(detail);
-                        app.apply_inspector_patch(patch, cx);
+                        app.apply_inspector_patch(patch, false, cx);
                     }
                     Err(err) => {
                         app.toast_err(format!("Failed to load commit diff: {err}"), cx);
@@ -726,10 +921,11 @@ impl GitOutApp {
         };
         let repo_gen = self.repo_generation;
         let selected = self.selected_worktree_file.clone();
+        let ignore_ws = self.ignore_whitespace;
         cx.spawn(async move |this, cx| {
             let (res, entries) = cx
                 .background_executor()
-                .spawn(async move { git::load_worktree_diff(&root, selected.as_ref()) })
+                .spawn(async move { git::load_worktree_diff(&root, selected.as_ref(), ignore_ws) })
                 .await;
             let _ = this.update(cx, |app, cx| {
                 app.push_cmds(entries);
@@ -737,7 +933,7 @@ impl GitOutApp {
                     return;
                 }
                 if let Ok(patch) = res {
-                    app.apply_inspector_patch(patch, cx);
+                    app.apply_inspector_patch(patch, true, cx);
                 }
                 cx.notify();
             });
@@ -745,8 +941,112 @@ impl GitOutApp {
         .detach();
     }
 
-    fn apply_inspector_patch(&mut self, patch: String, cx: &mut Context<Self>) {
+    pub fn select_stash(&mut self, reference: String, message: String, cx: &mut Context<Self>) {
+        self.selection = Selection::Stash(reference.clone());
+        self.selected_conflict_path = None;
+        self.load_stash_detail_bg(reference, message, cx);
+        cx.notify();
+    }
+
+    fn load_stash_detail_bg(
+        &mut self,
+        reference: String,
+        message: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(root) = self.repo_root.clone() else {
+            return;
+        };
+        let repo_gen = self.repo_generation;
+        cx.spawn(async move |this, cx| {
+            let (res, entries) = cx
+                .background_executor()
+                .spawn(async move { git::load_stash_detail(&root, &reference, &message) })
+                .await;
+            let _ = this.update(cx, |app, cx| {
+                app.push_cmds(entries);
+                if app.repo_generation != repo_gen {
+                    return;
+                }
+                match res {
+                    Ok(detail) => {
+                        let patch = detail.patch.clone();
+                        app.stash_detail = Some(detail);
+                        app.apply_inspector_patch(patch, false, cx);
+                    }
+                    Err(err) => app.toast_err(err.to_string(), cx),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub fn set_compare_base(&mut self, hash: String, label: String, cx: &mut Context<Self>) {
+        self.compare_base = Some((hash, label.clone()));
+        self.toast_info(
+            format!("Compare base set to {label} — right-click any commit to compare"),
+            cx,
+        );
+        cx.notify();
+    }
+
+    pub fn clear_compare_base(&mut self, cx: &mut Context<Self>) {
+        self.compare_base = None;
+        if matches!(self.selection, Selection::Compare { .. }) {
+            self.select_wip(cx);
+        } else {
+            cx.notify();
+        }
+    }
+
+    pub fn compare_commits(&mut self, base: String, head: String, cx: &mut Context<Self>) {
+        self.selection = Selection::Compare {
+            base: base.clone(),
+            head: head.clone(),
+        };
+        self.selected_conflict_path = None;
+        self.load_compare_detail_bg(base, head, cx);
+        cx.notify();
+    }
+
+    fn load_compare_detail_bg(&mut self, base: String, head: String, cx: &mut Context<Self>) {
+        let Some(root) = self.repo_root.clone() else {
+            return;
+        };
+        let repo_gen = self.repo_generation;
+        let ignore_ws = self.ignore_whitespace;
+        cx.spawn(async move |this, cx| {
+            let (res, entries) = cx
+                .background_executor()
+                .spawn(async move { git::load_compare_detail(&root, &base, &head, ignore_ws) })
+                .await;
+            let _ = this.update(cx, |app, cx| {
+                app.push_cmds(entries);
+                if app.repo_generation != repo_gen {
+                    return;
+                }
+                match res {
+                    Ok(detail) => {
+                        let patch = detail.patch.clone();
+                        app.compare_detail = Some(detail);
+                        app.apply_inspector_patch(patch, false, cx);
+                    }
+                    Err(err) => app.toast_err(format!("Compare failed: {err}"), cx),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn apply_inspector_patch(&mut self, patch: String, parse_hunks: bool, cx: &mut Context<Self>) {
         self.inspector_raw_patch = patch.clone();
+        self.parsed_wip_patch = if parse_hunks {
+            parse_unified_patch(&patch)
+        } else {
+            Vec::new()
+        };
         let files = parse_diff_lenient(&patch);
         self.inspector_diff_state
             .update(cx, |state, cx| state.set_files(files, cx));
@@ -796,6 +1096,7 @@ impl GitOutApp {
                     }
                     Err(err) => {
                         app.toast_err(err.to_string(), cx);
+                        app.refresh_snapshot_only(cx);
                         cx.notify();
                     }
                 }
@@ -862,11 +1163,33 @@ impl GitOutApp {
         });
     }
 
+    pub fn pull_rebase(&mut self, cx: &mut Context<Self>) {
+        self.run_remote_git_action(RemoteGitOp::Pull, Some("Pulled with rebase"), cx, |r| {
+            git::pull_rebase(r)
+        });
+    }
+
+    pub fn pull_ff_only(&mut self, cx: &mut Context<Self>) {
+        self.run_remote_git_action(RemoteGitOp::Pull, Some("Fast-forward pulled"), cx, |r| {
+            git::pull_ff_only(r)
+        });
+    }
+
     pub fn push(&mut self, cx: &mut Context<Self>) {
         let branch = self.snapshot.as_ref().and_then(|s| s.head_branch.clone());
         self.run_remote_git_action(RemoteGitOp::Push, Some("Pushed to remote"), cx, move |r| {
             git::push(r, branch.as_deref())
         });
+    }
+
+    pub fn push_force_with_lease(&mut self, cx: &mut Context<Self>) {
+        let branch = self.snapshot.as_ref().and_then(|s| s.head_branch.clone());
+        self.run_remote_git_action(
+            RemoteGitOp::Push,
+            Some("Force-pushed (--force-with-lease)"),
+            cx,
+            move |r| git::push_force_with_lease(r, branch.as_deref()),
+        );
     }
 
     pub fn checkout_target(&mut self, target: String, cx: &mut Context<Self>) {
@@ -885,12 +1208,30 @@ impl GitOutApp {
         });
     }
 
+    pub fn rename_branch(&mut self, old_name: String, new_name: String, cx: &mut Context<Self>) {
+        self.run_git_action(Some("Renamed branch"), cx, move |r| {
+            git::rename_branch(r, &old_name, &new_name)
+        });
+    }
+
     pub fn delete_branch(&mut self, name: String, force: bool, cx: &mut Context<Self>) {
         self.run_git_action(None, cx, move |r| git::delete_branch(r, &name, force));
     }
 
+    pub fn delete_remote_branch(&mut self, remote_branch: String, cx: &mut Context<Self>) {
+        self.run_git_action(Some("Deleted remote branch"), cx, move |r| {
+            git::delete_remote_branch(r, &remote_branch)
+        });
+    }
+
     pub fn merge_branch(&mut self, name: String, cx: &mut Context<Self>) {
         self.run_git_action(None, cx, move |r| git::merge_branch(r, &name));
+    }
+
+    pub fn rebase_onto(&mut self, target: String, cx: &mut Context<Self>) {
+        self.run_git_action(Some("Rebased current branch"), cx, move |r| {
+            git::rebase_onto(r, &target)
+        });
     }
 
     pub fn stage_file(&mut self, path: String, cx: &mut Context<Self>) {
@@ -909,10 +1250,148 @@ impl GitOutApp {
         self.run_git_action(None, cx, |r| git::unstage_all(r));
     }
 
+    pub fn stage_patch(
+        &mut self,
+        patch: String,
+        reverse: bool,
+        msg: &'static str,
+        cx: &mut Context<Self>,
+    ) {
+        self.run_git_action(Some(msg), cx, move |r| {
+            git::apply_patch_cached(r, &patch, reverse)
+        });
+    }
+
+    pub fn discard_patch(&mut self, patch: String, cx: &mut Context<Self>) {
+        self.run_git_action(Some("Discarded hunk"), cx, move |r| {
+            git::discard_patch(r, &patch)
+        });
+    }
+
     pub fn discard_file(&mut self, file: FileChange, cx: &mut Context<Self>) {
         self.run_git_action(Some("Discarded file changes"), cx, move |r| {
             git::discard_file(r, &file)
         });
+    }
+
+    pub fn discard_all_unstaged(&mut self, cx: &mut Context<Self>) {
+        if self
+            .selected_worktree_file
+            .as_ref()
+            .is_some_and(|f| !f.staged)
+        {
+            self.selected_worktree_file = None;
+        }
+        self.run_git_action(Some("Discarded all unstaged changes"), cx, |r| {
+            git::discard_all_unstaged(r)
+        });
+    }
+
+    pub fn discard_all_changes(&mut self, cx: &mut Context<Self>) {
+        self.selected_worktree_file = None;
+        self.selected_conflict_path = None;
+        self.run_git_action(Some("Discarded all working tree changes"), cx, |r| {
+            git::discard_all_changes(r)
+        });
+    }
+
+    pub fn resolve_conflict_ours(&mut self, path: String, cx: &mut Context<Self>) {
+        self.run_git_action(Some("Accepted Ours and staged"), cx, move |r| {
+            git::checkout_ours(r, &path)
+        });
+    }
+
+    pub fn resolve_conflict_theirs(&mut self, path: String, cx: &mut Context<Self>) {
+        self.run_git_action(Some("Accepted Theirs and staged"), cx, move |r| {
+            git::checkout_theirs(r, &path)
+        });
+    }
+
+    pub fn save_resolved_conflict(&mut self, path: String, cx: &mut Context<Self>) {
+        let Some(resolved) = self.inspector_diff_state.read(cx).resolved_text(&path) else {
+            self.toast_err("Resolve every conflict block before saving.", cx);
+            return;
+        };
+        self.selected_conflict_path = None;
+        self.run_git_action(Some("Saved resolved file and staged"), cx, move |r| {
+            git::write_resolved_and_stage(r, &path, &resolved)
+        });
+    }
+
+    pub fn toggle_amend_commit(&mut self, cx: &mut Context<Self>) {
+        self.amend_commit = !self.amend_commit;
+        let summary_empty = self.commit_summary_input.read(cx).value().trim().is_empty();
+        if self.amend_commit
+            && summary_empty
+            && let Some(root) = self.repo_root.clone()
+        {
+            let repo_gen = self.repo_generation;
+            cx.spawn(async move |this, cx| {
+                let (res, entry) = cx
+                    .background_executor()
+                    .spawn(async move { git::read_head_commit_message(&root) })
+                    .await;
+                let _ = this.update(cx, |app, cx| {
+                    app.push_cmd(entry);
+                    if app.repo_generation != repo_gen || !app.amend_commit {
+                        return;
+                    }
+                    if let Ok((sum, body)) = res {
+                        let _ = app.window_handle.update(cx, |_, window, cx| {
+                            app.commit_summary_input
+                                .update(cx, |s, cx| s.set_value(sum, window, cx));
+                            app.commit_body_input
+                                .update(cx, |s, cx| s.set_value(body, window, cx));
+                        });
+                    }
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
+        cx.notify();
+    }
+
+    pub fn undo_last_commit(&mut self, cx: &mut Context<Self>) {
+        let Some(root) = self.repo_root.clone() else {
+            return;
+        };
+        let repo_gen = self.repo_generation;
+        self.busy_git = true;
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let (res, entry) = cx
+                .background_executor()
+                .spawn(async move { git::undo_last_commit(&root) })
+                .await;
+            let _ = this.update(cx, |app, cx| {
+                app.push_cmd(entry);
+                if app.repo_generation != repo_gen {
+                    return;
+                }
+                app.busy_git = false;
+                match res {
+                    Ok((sum, body)) => {
+                        let _ = app.window_handle.update(cx, |_, window, cx| {
+                            app.commit_summary_input
+                                .update(cx, |s, cx| s.set_value(sum, window, cx));
+                            app.commit_body_input
+                                .update(cx, |s, cx| s.set_value(body, window, cx));
+                        });
+                        app.amend_commit = false;
+                        app.selection = Selection::Wip;
+                        app.toast_ok("Undid last commit (changes kept staged)", cx);
+                        app.refresh_snapshot_only(cx);
+                    }
+                    Err(err) => {
+                        app.toast_err(err.to_string(), cx);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     pub fn submit_commit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -927,6 +1406,7 @@ impl GitOutApp {
             format!("{summary}\n\n{body}")
         };
         let amend = self.amend_commit;
+        let sign = self.sign_commit;
 
         self.commit_summary_input
             .update(cx, |s, cx| s.set_value("", window, cx));
@@ -936,13 +1416,19 @@ impl GitOutApp {
         self.selected_worktree_file = None;
 
         self.run_git_action(Some("Created commit"), cx, move |r| {
-            git::commit(r, &message, amend)
+            git::commit_with_opts(r, &message, amend, sign)
         });
     }
 
-    pub fn stash_push(&mut self, message: Option<String>, cx: &mut Context<Self>) {
+    pub fn stash_push_opts(
+        &mut self,
+        message: Option<String>,
+        include_untracked: bool,
+        keep_index: bool,
+        cx: &mut Context<Self>,
+    ) {
         self.run_git_action(Some("Stashed working changes"), cx, move |r| {
-            git::stash_push(r, message.as_deref())
+            git::stash_push_opts(r, message.as_deref(), include_untracked, keep_index)
         });
     }
 
@@ -964,6 +1450,12 @@ impl GitOutApp {
         });
     }
 
+    pub fn branch_from_stash(&mut self, name: String, reference: String, cx: &mut Context<Self>) {
+        self.run_git_action(Some("Created branch from stash"), cx, move |r| {
+            git::branch_from_stash(r, &name, &reference)
+        });
+    }
+
     pub fn cherry_pick(&mut self, hash: String, cx: &mut Context<Self>) {
         self.run_git_action(Some("Cherry-picked commit"), cx, move |r| {
             git::cherry_pick(r, &hash)
@@ -979,6 +1471,312 @@ impl GitOutApp {
     pub fn reset_to(&mut self, hash: String, mode: ResetMode, cx: &mut Context<Self>) {
         self.run_git_action(Some("Reset branch"), cx, move |r| {
             git::reset_to(r, &hash, mode)
+        });
+    }
+
+    pub fn open_interactive_rebase_from(
+        &mut self,
+        base_hash: String,
+        base_short: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(root) = self.repo_root.clone() else {
+            return;
+        };
+        let repo_gen = self.repo_generation;
+        let app_entity = cx.entity();
+        cx.spawn(async move |this, cx| {
+            let b_load = base_hash.clone();
+            let (res, entry) = cx
+                .background_executor()
+                .spawn(async move { git::load_rebase_commits(&root, &b_load) })
+                .await;
+            let _ = this.update(cx, |app, cx| {
+                app.push_cmd(entry);
+                if app.repo_generation != repo_gen {
+                    return;
+                }
+                match res {
+                    Ok(items) if items.is_empty() => {
+                        app.toast_info("No commits on HEAD after that base commit to rebase.", cx);
+                    }
+                    Ok(items) => {
+                        let _ = app.window_handle.update(cx, |_, window, cx| {
+                            rebase_dialog::open_interactive_rebase_dialog(
+                                app_entity.clone(),
+                                base_hash,
+                                base_short,
+                                items,
+                                window,
+                                cx,
+                            );
+                        });
+                    }
+                    Err(err) => app.toast_err(err.to_string(), cx),
+                }
+            });
+        })
+        .detach();
+    }
+
+    pub fn run_interactive_rebase(
+        &mut self,
+        base_hash: String,
+        items: Vec<RebaseTodoItem>,
+        cx: &mut Context<Self>,
+    ) {
+        self.run_git_action(Some("Completed interactive rebase"), cx, move |r| {
+            git::run_interactive_rebase(r, &base_hash, &items)
+        });
+    }
+
+    pub fn continue_op(&mut self, cx: &mut Context<Self>) {
+        let Some(op_state) = self.snapshot.as_ref().map(|s| s.op_state.clone()) else {
+            return;
+        };
+        self.run_git_action(Some("Continued operation"), cx, move |r| {
+            git::continue_op(r, &op_state)
+        });
+    }
+
+    pub fn skip_op(&mut self, cx: &mut Context<Self>) {
+        let Some(op_state) = self.snapshot.as_ref().map(|s| s.op_state.clone()) else {
+            return;
+        };
+        self.run_git_action(Some("Skipped commit"), cx, move |r| {
+            git::skip_op(r, &op_state)
+        });
+    }
+
+    pub fn abort_op(&mut self, cx: &mut Context<Self>) {
+        let Some(op_state) = self.snapshot.as_ref().map(|s| s.op_state.clone()) else {
+            return;
+        };
+        self.run_git_action(Some("Aborted operation"), cx, move |r| {
+            git::abort_op(r, &op_state)
+        });
+    }
+
+    pub fn create_tag(
+        &mut self,
+        name: String,
+        target: String,
+        message: Option<String>,
+        push_after: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.run_git_action(Some("Created tag"), cx, move |r| {
+            let (res, entry) = git::create_tag(r, &name, &target, message.as_deref());
+            if res.is_ok() && push_after {
+                return git::push_tag(r, &name);
+            }
+            (res, entry)
+        });
+    }
+
+    pub fn delete_tag(&mut self, name: String, cx: &mut Context<Self>) {
+        self.run_git_action(Some("Deleted tag"), cx, move |r| git::delete_tag(r, &name));
+    }
+
+    pub fn push_tag(&mut self, name: String, cx: &mut Context<Self>) {
+        self.run_git_action(Some("Pushed tag to origin"), cx, move |r| {
+            git::push_tag(r, &name)
+        });
+    }
+
+    pub fn delete_remote_tag(&mut self, name: String, cx: &mut Context<Self>) {
+        self.run_git_action(Some("Deleted remote tag"), cx, move |r| {
+            git::delete_remote_tag(r, &name)
+        });
+    }
+
+    pub fn bisect_start(&mut self, bad_ref: String, good_ref: String, cx: &mut Context<Self>) {
+        self.run_git_action(Some("Started git bisect"), cx, move |r| {
+            git::bisect_start(r, &bad_ref, &good_ref)
+        });
+    }
+
+    pub fn bisect_mark(&mut self, action: BisectAction, cx: &mut Context<Self>) {
+        self.run_git_action(None, cx, move |r| git::bisect_mark(r, action));
+    }
+
+    pub fn open_reflog(&mut self, cx: &mut Context<Self>) {
+        let Some(root) = self.repo_root.clone() else {
+            return;
+        };
+        let repo_gen = self.repo_generation;
+        let app_entity = cx.entity();
+        cx.spawn(async move |this, cx| {
+            let (res, entry) = cx
+                .background_executor()
+                .spawn(async move { git::load_reflog(&root, 120) })
+                .await;
+            let _ = this.update(cx, |app, cx| {
+                app.push_cmd(entry);
+                if app.repo_generation != repo_gen {
+                    return;
+                }
+                match res {
+                    Ok(entries) => {
+                        let _ = app.window_handle.update(cx, |_, window, cx| {
+                            reflog_dialog::open_reflog_dialog(
+                                app_entity.clone(),
+                                entries,
+                                window,
+                                cx,
+                            );
+                        });
+                    }
+                    Err(err) => app.toast_err(err.to_string(), cx),
+                }
+            });
+        })
+        .detach();
+    }
+
+    pub fn open_file_finder(&mut self, cx: &mut Context<Self>) {
+        let Some(root) = self.repo_root.clone() else {
+            return;
+        };
+        let repo_gen = self.repo_generation;
+        let app_entity = cx.entity();
+        cx.spawn(async move |this, cx| {
+            let (res, entry) = cx
+                .background_executor()
+                .spawn(async move { git::list_tracked_files(&root) })
+                .await;
+            let _ = this.update(cx, |app, cx| {
+                app.push_cmd(entry);
+                if app.repo_generation != repo_gen {
+                    return;
+                }
+                match res {
+                    Ok(files) => {
+                        let _ = app.window_handle.update(cx, |_, window, cx| {
+                            history_dialog::open_file_finder_dialog(
+                                app_entity.clone(),
+                                files,
+                                window,
+                                cx,
+                            );
+                        });
+                    }
+                    Err(err) => app.toast_err(err.to_string(), cx),
+                }
+            });
+        })
+        .detach();
+    }
+
+    pub fn worktree_add(
+        &mut self,
+        path: String,
+        branch_or_ref: String,
+        create_branch: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.run_git_action(Some("Added worktree"), cx, move |r| {
+            git::worktree_add(r, &path, &branch_or_ref, create_branch)
+        });
+    }
+
+    pub fn worktree_remove(&mut self, path: PathBuf, force: bool, cx: &mut Context<Self>) {
+        self.run_git_action(Some("Removed worktree"), cx, move |r| {
+            git::worktree_remove(r, &path, force)
+        });
+    }
+
+    pub fn submodule_update(&mut self, cx: &mut Context<Self>) {
+        self.run_git_action(Some("Updated submodules"), cx, |r| {
+            git::submodule_update(r)
+        });
+    }
+
+    pub fn remote_add(&mut self, name: String, url: String, cx: &mut Context<Self>) {
+        self.run_git_action(Some("Added remote"), cx, move |r| {
+            git::remote_add(r, &name, &url)
+        });
+    }
+
+    pub fn remote_remove(&mut self, name: String, cx: &mut Context<Self>) {
+        self.run_git_action(Some("Removed remote"), cx, move |r| {
+            git::remote_remove(r, &name)
+        });
+    }
+
+    pub fn run_pickaxe_search(&mut self, term: String, cx: &mut Context<Self>) {
+        let trimmed = term.trim().to_string();
+        if trimmed.is_empty() {
+            self.clear_pickaxe_search(cx);
+            return;
+        }
+        let Some(root) = self.repo_root.clone() else {
+            return;
+        };
+        let head_hash = self.snapshot.as_ref().and_then(|s| s.head_hash.clone());
+        let repo_gen = self.repo_generation;
+        self.busy_git = true;
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let t_clone = trimmed.clone();
+            let (res, entry) = cx
+                .background_executor()
+                .spawn(async move {
+                    git::search_pickaxe(&root, &t_clone, 200, head_hash.as_deref())
+                })
+                .await;
+            let _ = this.update(cx, |app, cx| {
+                app.push_cmd(entry);
+                if app.repo_generation != repo_gen {
+                    return;
+                }
+                app.busy_git = false;
+                match res {
+                    Ok(commits) => {
+                        app.pickaxe_query = Some(trimmed);
+                        app.pickaxe_commits = Some(commits);
+                    }
+                    Err(err) => app.toast_err(err.to_string(), cx),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub fn clear_pickaxe_search(&mut self, cx: &mut Context<Self>) {
+        self.pickaxe_query = None;
+        self.pickaxe_commits = None;
+        cx.notify();
+    }
+
+    pub fn copy_commit_patch(&mut self, hash: String, cx: &mut Context<Self>) {
+        let Some(root) = self.repo_root.clone() else {
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            let (res, entry) = cx
+                .background_executor()
+                .spawn(async move { git::format_commit_patch(&root, &hash) })
+                .await;
+            let _ = this.update(cx, |app, cx| {
+                app.push_cmd(entry);
+                match res {
+                    Ok(patch) => {
+                        cx.write_to_clipboard(ClipboardItem::new_string(patch));
+                        app.toast_ok("Copied format-patch to clipboard", cx);
+                    }
+                    Err(err) => app.toast_err(err.to_string(), cx),
+                }
+            });
+        })
+        .detach();
+    }
+
+    pub fn apply_patch_file(&mut self, patch_path: String, cx: &mut Context<Self>) {
+        self.run_git_action(Some("Applied patch to working tree"), cx, move |r| {
+            git::apply_patch_file(r, &patch_path)
         });
     }
 
@@ -1533,6 +2331,7 @@ impl Render for GitOutApp {
         let fg = hex_color(gh_colors::FG);
         let app_for_open = cx.entity();
         let app_for_new_tab = cx.entity();
+        let app_for_palette = cx.entity();
 
         v_flex()
             .id("git-out-root")
@@ -1571,6 +2370,15 @@ impl Render for GitOutApp {
                 this.show_cmd_log = !this.show_cmd_log;
                 cx.notify();
             }))
+            .on_action(move |_: &OpenCommandPalette, window, cx| {
+                command_palette::open_command_palette(app_for_palette.clone(), window, cx);
+            })
+            .on_action(cx.listener(|this, _: &OpenReflog, _, cx| {
+                this.open_reflog(cx);
+            }))
+            .on_action(cx.listener(|this, _: &OpenFileFinder, _, cx| {
+                this.open_file_finder(cx);
+            }))
             .when(!self.open_repos.is_empty(), |col| {
                 col.child(toolbar::render_repo_tabs(self, cx))
             })
@@ -1584,7 +2392,7 @@ impl Render for GitOutApp {
                         ActiveTab::Graph => h_resizable("graph-main-split")
                             .child(
                                 resizable_panel()
-                                    .size(px(230.))
+                                    .size(px(235.))
                                     .size_range(px(170.)..px(380.))
                                     .child(sidebar::render_sidebar(self, cx)),
                             )
@@ -1593,14 +2401,20 @@ impl Render for GitOutApp {
                             )
                             .child(
                                 resizable_panel()
-                                    .size(px(470.))
-                                    .size_range(px(320.)..px(820.))
+                                    .size(px(490.))
+                                    .size_range(px(340.)..px(840.))
                                     .child(inspector::render_inspector(self, cx)),
                             )
                             .into_any_element(),
-                        ActiveTab::PullRequests => gh_prs::render_prs_view(self, cx).into_any_element(),
-                        ActiveTab::Actions => gh_actions::render_actions_view(self, cx).into_any_element(),
-                        ActiveTab::Issues => gh_issues::render_issues_view(self, cx).into_any_element(),
+                        ActiveTab::PullRequests => {
+                            gh_prs::render_prs_view(self, cx).into_any_element()
+                        }
+                        ActiveTab::Actions => {
+                            gh_actions::render_actions_view(self, cx).into_any_element()
+                        }
+                        ActiveTab::Issues => {
+                            gh_issues::render_issues_view(self, cx).into_any_element()
+                        }
                     }),
             )
             .when(self.show_cmd_log, |col| {

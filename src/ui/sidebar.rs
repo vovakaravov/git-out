@@ -1,4 +1,4 @@
-use super::{ActiveTab, GitOutApp, dialogs};
+use super::{ActiveTab, GitOutApp, Selection, dialogs, reflog_dialog};
 use crate::gh::CiState;
 use crate::theme::{gh_colors, hex_color};
 use gpui_kit::assets::IconName;
@@ -6,7 +6,10 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenuItem};
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
-use gpui_kit::{ClipboardItem, Context, InteractiveElement as _, IntoElement, ParentElement, StatefulInteractiveElement as _, Styled, div, prelude::FluentBuilder as _, px};
+use gpui_kit::{
+    ClipboardItem, Context, InteractiveElement as _, IntoElement, ParentElement,
+    StatefulInteractiveElement as _, Styled, div, prelude::FluentBuilder as _, px,
+};
 use std::rc::Rc;
 
 pub fn render_sidebar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl IntoElement {
@@ -19,6 +22,7 @@ pub fn render_sidebar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
     let purple = hex_color(gh_colors::PURPLE);
     let yellow = hex_color(gh_colors::YELLOW);
     let red = hex_color(gh_colors::RED_FG);
+    let orange = hex_color(gh_colors::ORANGE);
 
     let Some(snap) = app.snapshot.as_ref() else {
         return v_flex()
@@ -31,7 +35,7 @@ pub fn render_sidebar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                 div()
                     .text_xs()
                     .text_color(fg_muted)
-                    .child("Open a Git repository to browse branches, tags, and stashes."),
+                    .child("Open a Git repository to browse branches, tags, stashes, worktrees, and submodules."),
             )
             .into_any_element();
     };
@@ -78,6 +82,7 @@ pub fn render_sidebar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                                 let app_for_del = app_entity.clone();
                                 let app_menu = app_entity.clone();
                                 let can_merge = head_branch.as_deref() != Some(b.name.as_str());
+                                let cur_head = head_branch.clone().unwrap_or_else(|| "HEAD".into());
 
                                 h_flex()
                                     .id(("local-br", i))
@@ -97,12 +102,21 @@ pub fn render_sidebar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                                     .context_menu(move |menu, _, _| {
                                         let app_co = app_menu.clone();
                                         let app_mg = app_menu.clone();
+                                        let app_rb = app_menu.clone();
+                                        let app_cmp = app_menu.clone();
                                         let app_br = app_menu.clone();
+                                        let app_ren = app_menu.clone();
                                         let app_del_m = app_menu.clone();
+                                        let app_fdel_m = app_menu.clone();
                                         let n_co = name_menu.clone();
                                         let n_mg = name_menu.clone();
+                                        let n_rb = name_menu.clone();
+                                        let n_cmp = name_menu.clone();
+                                        let h_cmp = cur_head.clone();
                                         let n_br = name_menu.clone();
+                                        let n_ren = name_menu.clone();
                                         let n_del = name_menu.clone();
+                                        let n_fdel = name_menu.clone();
                                         let n_copy = name_menu.clone();
 
                                         menu.label(format!("Branch {name_menu}"))
@@ -133,6 +147,33 @@ pub fn render_sidebar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                                                 }),
                                             )
                                             .item(
+                                                PopupMenuItem::new(format!(
+                                                    "Rebase current onto '{name_menu}'"
+                                                ))
+                                                .icon(IconName::GitCommitHorizontal)
+                                                .disabled(!can_merge)
+                                                .on_click(move |_, _, cx| {
+                                                    let n = n_rb.clone();
+                                                    app_rb.update(cx, |app, cx| {
+                                                        app.rebase_onto(n, cx);
+                                                    });
+                                                }),
+                                            )
+                                            .item(
+                                                PopupMenuItem::new(format!(
+                                                    "Compare '{name_menu}'..HEAD"
+                                                ))
+                                                .icon(IconName::GitCompare)
+                                                .disabled(!can_merge)
+                                                .on_click(move |_, _, cx| {
+                                                    let b = n_cmp.clone();
+                                                    let hd = h_cmp.clone();
+                                                    app_cmp.update(cx, |app, cx| {
+                                                        app.compare_commits(b, hd, cx);
+                                                    });
+                                                }),
+                                            )
+                                            .item(
                                                 PopupMenuItem::new("Create branch from here…")
                                                     .icon(IconName::GitBranchPlus)
                                                     .on_click(move |_, window, cx| {
@@ -144,10 +185,24 @@ pub fn render_sidebar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                                                         );
                                                     }),
                                             )
+                                            .item(
+                                                PopupMenuItem::new(format!(
+                                                    "Rename '{name_menu}'…"
+                                                ))
+                                                .icon(IconName::GitBranch)
+                                                .on_click(move |_, window, cx| {
+                                                    reflog_dialog::open_rename_branch_dialog(
+                                                        app_ren.clone(),
+                                                        n_ren.clone(),
+                                                        window,
+                                                        cx,
+                                                    );
+                                                }),
+                                            )
                                             .separator()
                                             .item(
                                                 PopupMenuItem::new(format!(
-                                                    "Delete '{name_menu}'…"
+                                                    "Delete '{name_menu}' (-d)…"
                                                 ))
                                                 .icon(IconName::Trash)
                                                 .disabled(is_head)
@@ -156,7 +211,7 @@ pub fn render_sidebar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                                                     let target = n_del.clone();
                                                     dialogs::open_confirm_danger(
                                                         format!("Delete branch `{target}`?"),
-                                                        "Runs `git branch -d`. Unmerged branches will not be deleted unless forced from terminal.".to_string(),
+                                                        "Runs `git branch -d`.".to_string(),
                                                         "Delete".to_string(),
                                                         window,
                                                         cx,
@@ -164,6 +219,30 @@ pub fn render_sidebar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                                                             let bname = target.clone();
                                                             app_d.update(cx, |app, cx| {
                                                                 app.delete_branch(bname, false, cx);
+                                                            });
+                                                        }),
+                                                    );
+                                                }),
+                                            )
+                                            .item(
+                                                PopupMenuItem::new(format!(
+                                                    "Force Delete '{name_menu}' (-D)…"
+                                                ))
+                                                .icon(IconName::TriangleAlert)
+                                                .disabled(is_head)
+                                                .on_click(move |_, window, cx| {
+                                                    let app_d = app_fdel_m.clone();
+                                                    let target = n_fdel.clone();
+                                                    dialogs::open_confirm_danger(
+                                                        format!("Force delete `{target}`?"),
+                                                        "Runs `git branch -D`, discarding any unmerged commits on this branch.".to_string(),
+                                                        "Force Delete".to_string(),
+                                                        window,
+                                                        cx,
+                                                        Rc::new(move |_, cx| {
+                                                            let bname = target.clone();
+                                                            app_d.update(cx, |app, cx| {
+                                                                app.delete_branch(bname, true, cx);
                                                             });
                                                         }),
                                                     );
@@ -276,7 +355,7 @@ pub fn render_sidebar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                                                             let target = name_del.clone();
                                                             dialogs::open_confirm_danger(
                                                                 format!("Delete branch `{target}`?"),
-                                                                "Runs `git branch -d`. Unmerged branches will not be deleted unless forced from terminal.".to_string(),
+                                                                "Runs `git branch -d`. Unmerged branches will not be deleted unless forced from context menu.".to_string(),
                                                                 "Delete".to_string(),
                                                                 window,
                                                                 cx,
@@ -294,10 +373,10 @@ pub fn render_sidebar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                             })),
                     )
                 })
-                // REMOTES
+                // REMOTE BRANCHES
                 .child(render_section_header(
                     "remote-sec",
-                    "REMOTES",
+                    "REMOTE BRANCHES",
                     snap.remote_branches.len(),
                     app.sec_remotes_open,
                     cx.listener(|this, _, _, cx| {
@@ -331,7 +410,13 @@ pub fn render_sidebar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                                     .hover(|s| s.bg(hex_color(gh_colors::BTN_BG)))
                                     .context_menu(move |menu, _, _| {
                                         let app_co = app_rem_menu.clone();
+                                        let app_mg = app_rem_menu.clone();
+                                        let app_rb = app_rem_menu.clone();
+                                        let app_del = app_rem_menu.clone();
                                         let s_co = short_rem.clone();
+                                        let r_mg = rem_menu.clone();
+                                        let r_rb = rem_menu.clone();
+                                        let r_del = rem_menu.clone();
                                         let r_copy = rem_menu.clone();
                                         menu.label(format!("Remote {rem_menu}"))
                                             .item(
@@ -344,6 +429,54 @@ pub fn render_sidebar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                                                     app_co.update(cx, |app, cx| {
                                                         app.checkout_target(s, cx);
                                                     });
+                                                }),
+                                            )
+                                            .item(
+                                                PopupMenuItem::new(format!(
+                                                    "Merge '{rem_menu}' into current"
+                                                ))
+                                                .icon(IconName::GitMerge)
+                                                .on_click(move |_, _, cx| {
+                                                    let r = r_mg.clone();
+                                                    app_mg.update(cx, |app, cx| {
+                                                        app.merge_branch(r, cx);
+                                                    });
+                                                }),
+                                            )
+                                            .item(
+                                                PopupMenuItem::new(format!(
+                                                    "Rebase current onto '{rem_menu}'"
+                                                ))
+                                                .icon(IconName::GitCommitHorizontal)
+                                                .on_click(move |_, _, cx| {
+                                                    let r = r_rb.clone();
+                                                    app_rb.update(cx, |app, cx| {
+                                                        app.rebase_onto(r, cx);
+                                                    });
+                                                }),
+                                            )
+                                            .separator()
+                                            .item(
+                                                PopupMenuItem::new(format!(
+                                                    "Delete remote '{rem_menu}'…"
+                                                ))
+                                                .icon(IconName::Trash)
+                                                .on_click(move |_, window, cx| {
+                                                    let app_d = app_del.clone();
+                                                    let target = r_del.clone();
+                                                    dialogs::open_confirm_danger(
+                                                        format!("Delete remote branch `{target}`?"),
+                                                        "Runs `git push <remote> --delete <branch>`.".to_string(),
+                                                        "Delete Remote".to_string(),
+                                                        window,
+                                                        cx,
+                                                        Rc::new(move |_, cx| {
+                                                            let t = target.clone();
+                                                            app_d.update(cx, |app, cx| {
+                                                                app.delete_remote_branch(t, cx);
+                                                            });
+                                                        }),
+                                                    );
                                                 }),
                                             )
                                             .item(
@@ -438,6 +571,8 @@ pub fn render_sidebar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                             })
                             .children(snap.tags.iter().enumerate().map(|(i, t)| {
                                 let hash_jump = t.target_hash.clone();
+                                let tag_menu = t.name.clone();
+                                let app_tag_menu = app_entity.clone();
                                 h_flex()
                                     .id(("tag-row", i))
                                     .w_full()
@@ -451,6 +586,95 @@ pub fn render_sidebar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.jump_to_commit(&hash_jump, cx);
                                     }))
+                                    .context_menu(move |menu, _, _| {
+                                        let t_co = tag_menu.clone();
+                                        let t_push = tag_menu.clone();
+                                        let t_del = tag_menu.clone();
+                                        let t_rdel = tag_menu.clone();
+                                        let t_cp = tag_menu.clone();
+                                        let app_co = app_tag_menu.clone();
+                                        let app_p = app_tag_menu.clone();
+                                        let app_d = app_tag_menu.clone();
+                                        let app_rd = app_tag_menu.clone();
+                                        menu.label(format!("Tag {tag_menu}"))
+                                            .item(
+                                                PopupMenuItem::new(format!("Checkout '{tag_menu}'"))
+                                                    .icon(IconName::Check)
+                                                    .on_click(move |_, _, cx| {
+                                                        let n = t_co.clone();
+                                                        app_co.update(cx, |a, cx| {
+                                                            a.checkout_target(n, cx);
+                                                        });
+                                                    }),
+                                            )
+                                            .item(
+                                                PopupMenuItem::new("Push tag to origin")
+                                                    .icon(IconName::ArrowUp)
+                                                    .on_click(move |_, _, cx| {
+                                                        let n = t_push.clone();
+                                                        app_p.update(cx, |a, cx| {
+                                                            a.push_tag(n, cx);
+                                                        });
+                                                    }),
+                                            )
+                                            .separator()
+                                            .item(
+                                                PopupMenuItem::new("Delete local tag…")
+                                                    .icon(IconName::Trash)
+                                                    .on_click(move |_, window, cx| {
+                                                        let n = t_del.clone();
+                                                        let a = app_d.clone();
+                                                        dialogs::open_confirm_danger(
+                                                            format!("Delete local tag `{n}`?"),
+                                                            "Runs `git tag -d`.".to_string(),
+                                                            "Delete Tag".to_string(),
+                                                            window,
+                                                            cx,
+                                                            Rc::new(move |_, cx| {
+                                                                let tg = n.clone();
+                                                                a.update(cx, |app, cx| {
+                                                                    app.delete_tag(tg, cx);
+                                                                });
+                                                            }),
+                                                        );
+                                                    }),
+                                            )
+                                            .item(
+                                                PopupMenuItem::new("Delete tag on origin…")
+                                                    .icon(IconName::Trash)
+                                                    .on_click(move |_, window, cx| {
+                                                        let n = t_rdel.clone();
+                                                        let a = app_rd.clone();
+                                                        dialogs::open_confirm_danger(
+                                                            format!("Delete remote tag `{n}`?"),
+                                                            "Runs `git push origin --delete`.".to_string(),
+                                                            "Delete Remote Tag".to_string(),
+                                                            window,
+                                                            cx,
+                                                            Rc::new(move |_, cx| {
+                                                                let tg = n.clone();
+                                                                a.update(cx, |app, cx| {
+                                                                    app.delete_remote_tag(tg, cx);
+                                                                });
+                                                            }),
+                                                        );
+                                                    }),
+                                            )
+                                            .item(
+                                                PopupMenuItem::new("Copy tag name")
+                                                    .icon(IconName::Copy)
+                                                    .on_click(move |_, window, cx| {
+                                                        cx.write_to_clipboard(
+                                                            ClipboardItem::new_string(t_cp.clone()),
+                                                        );
+                                                        super::notify_info(
+                                                            window,
+                                                            cx,
+                                                            "Copied tag name",
+                                                        );
+                                                    }),
+                                            )
+                                    })
                                     .child(Icon::new(IconName::Tag).xsmall().text_color(yellow))
                                     .child(
                                         div()
@@ -487,20 +711,41 @@ pub fn render_sidebar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                                 )
                             })
                             .children(snap.stashes.iter().enumerate().map(|(i, st)| {
+                                let ref_sel = st.reference.clone();
+                                let msg_sel = st.message.clone();
                                 let ref_pop = st.reference.clone();
                                 let ref_apply = st.reference.clone();
+                                let ref_br = st.reference.clone();
                                 let ref_drop = st.reference.clone();
+                                let app_br = app_entity.clone();
                                 let app_drop = app_entity.clone();
+                                let is_sel = matches!(
+                                    &app.selection,
+                                    Selection::Stash(r) if r == &st.reference
+                                );
 
                                 v_flex()
+                                    .id(("stash-card", i))
                                     .w_full()
                                     .px_2()
                                     .py_1()
                                     .gap_1()
                                     .rounded(px(5.))
-                                    .bg(hex_color(gh_colors::CANVAS_DEFAULT))
+                                    .cursor_pointer()
+                                    .bg(if is_sel {
+                                        blue.opacity(0.14)
+                                    } else {
+                                        hex_color(gh_colors::CANVAS_DEFAULT)
+                                    })
                                     .border_1()
-                                    .border_color(hex_color(gh_colors::BORDER_MUTED))
+                                    .border_color(if is_sel {
+                                        blue.opacity(0.5)
+                                    } else {
+                                        hex_color(gh_colors::BORDER_MUTED)
+                                    })
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.select_stash(ref_sel.clone(), msg_sel.clone(), cx);
+                                    }))
                                     .child(
                                         h_flex()
                                             .gap_1p5()
@@ -527,6 +772,7 @@ pub fn render_sidebar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                                                     .label("Apply")
                                                     .on_click(cx.listener(
                                                         move |this, _, _, cx| {
+                                                            cx.stop_propagation();
                                                             this.stash_apply(
                                                                 ref_apply.clone(),
                                                                 cx,
@@ -540,6 +786,7 @@ pub fn render_sidebar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                                                     .label("Pop")
                                                     .on_click(cx.listener(
                                                         move |this, _, _, cx| {
+                                                            cx.stop_propagation();
                                                             this.stash_pop(
                                                                 Some(ref_pop.clone()),
                                                                 cx,
@@ -548,12 +795,29 @@ pub fn render_sidebar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                                                     )),
                                             )
                                             .child(
+                                                Button::new(("stash-branch", i))
+                                                    .ghost()
+                                                    .xsmall()
+                                                    .icon(IconName::GitBranchPlus)
+                                                    .tooltip("Branch from stash")
+                                                    .on_click(move |_, window, cx| {
+                                                        cx.stop_propagation();
+                                                        dialogs::open_branch_from_stash_dialog(
+                                                            app_br.clone(),
+                                                            ref_br.clone(),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    }),
+                                            )
+                                            .child(
                                                 Button::new(("stash-drop", i))
                                                     .ghost()
                                                     .xsmall()
                                                     .icon(IconName::Trash)
                                                     .tooltip("Drop stash")
                                                     .on_click(move |_, window, cx| {
+                                                        cx.stop_propagation();
                                                         let app_d = app_drop.clone();
                                                         let r = ref_drop.clone();
                                                         dialogs::open_confirm_danger(
@@ -575,7 +839,233 @@ pub fn render_sidebar(app: &GitOutApp, cx: &mut Context<GitOutApp>) -> impl Into
                             })),
                     )
                 })
-                // OPEN PRS QUICK-PEEK (FROM `gh`)
+                // WORKTREES
+                .child(render_section_header(
+                    "wt-sec",
+                    "WORKTREES",
+                    snap.worktrees.len(),
+                    app.sec_worktrees_open,
+                    cx.listener(|this, _, _, cx| {
+                        this.sec_worktrees_open = !this.sec_worktrees_open;
+                        cx.notify();
+                    }),
+                ))
+                .when(app.sec_worktrees_open, |col| {
+                    let app_add_wt = app_entity.clone();
+                    col.child(
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                Button::new("wt-add-btn")
+                                    .xsmall()
+                                    .icon(IconName::Plus)
+                                    .label("Add Worktree…")
+                                    .on_click(move |_, window, cx| {
+                                        reflog_dialog::open_add_worktree_dialog(
+                                            app_add_wt.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    }),
+                            )
+                            .children(snap.worktrees.iter().enumerate().map(|(i, wt)| {
+                                let label = wt
+                                    .branch
+                                    .clone()
+                                    .unwrap_or_else(|| wt.head.clone());
+                                let wt_open = wt.path.clone();
+                                let wt_rm = wt.path.clone();
+                                let app_rm = app_entity.clone();
+                                let path_str = wt.path.display().to_string();
+
+                                h_flex()
+                                    .id(("wt-row", i))
+                                    .w_full()
+                                    .px_2()
+                                    .py_1()
+                                    .gap_1()
+                                    .rounded(px(5.))
+                                    .items_center()
+                                    .justify_between()
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(hex_color(gh_colors::BTN_BG)))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.open_repository(wt_open.clone(), cx);
+                                    }))
+                                    .child(
+                                        v_flex()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(fg)
+                                                    .truncate()
+                                                    .child(label),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .font_family("monospace")
+                                                    .text_color(fg_muted)
+                                                    .truncate()
+                                                    .child(path_str),
+                                            ),
+                                    )
+                                    .when(!wt.is_main, |row| {
+                                        row.child(
+                                            Button::new(("wt-del", i))
+                                                .ghost()
+                                                .xsmall()
+                                                .icon(IconName::Trash)
+                                                .tooltip("Remove worktree")
+                                                .on_click(move |_, window, cx| {
+                                                    cx.stop_propagation();
+                                                    let p = wt_rm.clone();
+                                                    let a = app_rm.clone();
+                                                    dialogs::open_confirm_danger(
+                                                        "Remove Worktree?".to_string(),
+                                                        format!(
+                                                            "Runs `git worktree remove` on `{}`.",
+                                                            p.display()
+                                                        ),
+                                                        "Remove".to_string(),
+                                                        window,
+                                                        cx,
+                                                        Rc::new(move |_, cx| {
+                                                            let path = p.clone();
+                                                            a.update(cx, |app, cx| {
+                                                                app.worktree_remove(path, false, cx);
+                                                            });
+                                                        }),
+                                                    );
+                                                }),
+                                        )
+                                    })
+                            })),
+                    )
+                })
+                // SUBMODULES
+                .child(render_section_header(
+                    "sm-sec",
+                    "SUBMODULES",
+                    snap.submodules.len(),
+                    app.sec_submodules_open,
+                    cx.listener(|this, _, _, cx| {
+                        this.sec_submodules_open = !this.sec_submodules_open;
+                        cx.notify();
+                    }),
+                ))
+                .when(app.sec_submodules_open, |col| {
+                    col.child(
+                        v_flex()
+                            .gap_1()
+                            .when(!snap.submodules.is_empty(), |c| {
+                                c.child(
+                                    Button::new("sm-update-btn")
+                                        .xsmall()
+                                        .icon(IconName::RefreshCw)
+                                        .label("Update All (--init --recursive)")
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.submodule_update(cx);
+                                        })),
+                                )
+                            })
+                            .when(snap.submodules.is_empty(), |c| {
+                                c.child(
+                                    div()
+                                        .px_2()
+                                        .text_xs()
+                                        .text_color(fg_muted)
+                                        .child("No submodules"),
+                                )
+                            })
+                            .children(snap.submodules.iter().enumerate().map(|(i, sm)| {
+                                let (badge, col_b) = match sm.status {
+                                    '-' => ("-", yellow),
+                                    '+' => ("+", orange),
+                                    'U' => ("U", red),
+                                    _ => ("✓", green),
+                                };
+                                h_flex()
+                                    .id(("sm-row", i))
+                                    .w_full()
+                                    .px_2()
+                                    .py_0p5()
+                                    .gap_1p5()
+                                    .items_center()
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .font_family("monospace")
+                                            .font_weight(gpui_kit::FontWeight::BOLD)
+                                            .text_color(col_b)
+                                            .child(badge),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(fg_muted)
+                                            .truncate()
+                                            .child(sm.path.clone()),
+                                    )
+                            })),
+                    )
+                })
+                // REMOTES CONFIG
+                .child(render_section_header(
+                    "rm-cfg-sec",
+                    "REMOTES",
+                    snap.remotes.len(),
+                    app.sec_remote_configs_open,
+                    cx.listener(|this, _, _, cx| {
+                        this.sec_remote_configs_open = !this.sec_remote_configs_open;
+                        cx.notify();
+                    }),
+                ))
+                .when(app.sec_remote_configs_open, |col| {
+                    let app_rm_dlg = app_entity.clone();
+                    let remotes_clone = snap.remotes.clone();
+                    col.child(
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                Button::new("rm-manage-btn")
+                                    .xsmall()
+                                    .label("Manage Remotes…")
+                                    .on_click(move |_, window, cx| {
+                                        reflog_dialog::open_remotes_dialog(
+                                            app_rm_dlg.clone(),
+                                            remotes_clone.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    }),
+                            )
+                            .children(snap.remotes.iter().enumerate().map(|(i, rm)| {
+                                v_flex()
+                                    .id(("rm-cfg", i))
+                                    .px_2()
+                                    .py_0p5()
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                                            .text_color(fg)
+                                            .child(rm.name.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .font_family("monospace")
+                                            .text_color(fg_muted)
+                                            .truncate()
+                                            .child(rm.fetch_url.clone()),
+                                    )
+                            })),
+                    )
+                })
+                // OPEN PRS QUICK-PEEK
                 .when(!app.prs.is_empty(), |col| {
                     col.child(render_section_header(
                         "prs-sec",

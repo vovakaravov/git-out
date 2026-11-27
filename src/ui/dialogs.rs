@@ -305,6 +305,8 @@ pub fn open_create_branch_dialog(
 
 pub fn open_stash_dialog(app_entity: Entity<GitOutApp>, window: &mut Window, cx: &mut gpui_kit::App) {
     let msg_input = cx.new(|cx| InputState::new(window, cx).placeholder("Optional stash message"));
+    let include_untracked = Rc::new(Cell::new(true));
+    let keep_index = Rc::new(Cell::new(false));
     let initial_focus = Cell::new(true);
 
     window.open_dialog(cx, move |dialog, window, cx| {
@@ -313,20 +315,42 @@ pub fn open_stash_dialog(app_entity: Entity<GitOutApp>, window: &mut Window, cx:
         }
         let msg_for_ok = msg_input.clone();
         let app_for_ok = app_entity.clone();
+        let inc_flag = include_untracked.clone();
+        let inc_toggle = include_untracked.clone();
+        let ki_flag = keep_index.clone();
+        let ki_toggle = keep_index.clone();
 
         dialog
             .title("Stash Working Changes")
-            .w(px(420.))
+            .w(px(440.))
             .child(
                 v_flex()
-                    .gap_2()
+                    .gap_2p5()
                     .child(
                         div()
                             .text_xs()
                             .text_color(hex_color(gh_colors::FG_MUTED))
-                            .child("Stashes tracked and untracked files (git stash push -u)."),
+                            .child("Optional stash description:"),
                     )
-                    .child(Input::new(&msg_input).id("stash-msg").w_full()),
+                    .child(Input::new(&msg_input).id("stash-msg").w_full())
+                    .child(
+                        Checkbox::new("stash-include-untracked")
+                            .label("Include untracked files (-u)")
+                            .checked(inc_flag.get())
+                            .on_click(move |checked, window, _| {
+                                inc_toggle.set(*checked);
+                                window.refresh();
+                            }),
+                    )
+                    .child(
+                        Checkbox::new("stash-keep-index")
+                            .label("Keep staged changes in index (--keep-index)")
+                            .checked(ki_flag.get())
+                            .on_click(move |checked, window, _| {
+                                ki_toggle.set(*checked);
+                                window.refresh();
+                            }),
+                    ),
             )
             .footer(
                 DialogFooter::new()
@@ -341,9 +365,74 @@ pub fn open_stash_dialog(app_entity: Entity<GitOutApp>, window: &mut Window, cx:
                             .label("Stash Changes")
                             .on_click(move |_, window, cx| {
                                 let msg = msg_for_ok.read(cx).value().trim().to_string();
+                                let inc = inc_flag.get();
+                                let ki = ki_flag.get();
                                 window.close_dialog(cx);
                                 app_for_ok.update(cx, |app, cx| {
-                                    app.stash_push(if msg.is_empty() { None } else { Some(msg) }, cx);
+                                    app.stash_push_opts(
+                                        if msg.is_empty() { None } else { Some(msg) },
+                                        inc,
+                                        ki,
+                                        cx,
+                                    );
+                                });
+                            }),
+                    ),
+            )
+    });
+}
+
+pub fn open_branch_from_stash_dialog(
+    app_entity: Entity<GitOutApp>,
+    reference: String,
+    window: &mut Window,
+    cx: &mut gpui_kit::App,
+) {
+    let name_input = cx.new(|cx| InputState::new(window, cx).placeholder("stash-recovery-branch"));
+    let initial_focus = Cell::new(true);
+
+    window.open_dialog(cx, move |dialog, window, cx| {
+        if initial_focus.replace(false) {
+            name_input.focus_handle(cx).focus(window, cx);
+        }
+        let n_ok = name_input.clone();
+        let r_ok = reference.clone();
+        let app_ok = app_entity.clone();
+
+        dialog
+            .title(format!("Create Branch from {reference}"))
+            .w(px(420.))
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(hex_color(gh_colors::FG_MUTED))
+                            .child("Runs `git stash branch <name> <ref>` and drops the stash cleanly:"),
+                    )
+                    .child(Input::new(&name_input).id("stash-br-name").w_full()),
+            )
+            .footer(
+                DialogFooter::new()
+                    .child(
+                        Button::new("sb-cancel")
+                            .label("Cancel")
+                            .on_click(|_, window, cx| window.close_dialog(cx)),
+                    )
+                    .child(
+                        Button::new("sb-ok")
+                            .primary()
+                            .label("Create Branch")
+                            .on_click(move |_, window, cx| {
+                                let name = n_ok.read(cx).value().trim().to_string();
+                                if name.is_empty() {
+                                    return;
+                                }
+                                let r = r_ok.clone();
+                                window.close_dialog(cx);
+                                app_ok.update(cx, |app, cx| {
+                                    app.branch_from_stash(name, r, cx);
                                 });
                             }),
                     ),

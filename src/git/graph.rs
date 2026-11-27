@@ -197,6 +197,7 @@ mod tests {
             timestamp: 1_700_000_000,
             subject: format!("Commit {hash}"),
             is_head,
+            signature_status: 'N',
         }
     }
 
